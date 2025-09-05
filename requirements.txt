@@ -1,0 +1,13 @@
+# Core
+streamlit
+pandas
+numpy
+
+# Data ingestion & APIs
+dropbox
+openai
+python-dotenv
+
+# Testing
+pytest
+pytest-cov
