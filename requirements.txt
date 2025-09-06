@@ -11,7 +11,7 @@ openai
 python-dotenv
 altair
 plotly
-faiss
+faiss-cpu
 pickle
 
 # Testing
