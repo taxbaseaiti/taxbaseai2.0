@@ -1,154 +1,294 @@
 import streamlit as st
+import streamlit_authenticator as stauth
+import bcrypt
 import pandas as pd
+import numpy as np
 from io import BytesIO
 import dropbox
 import openai
 import altair as alt
+import plotly.express as px
+import faiss
+import pickle
 
-st.write("Todos os secrets:", st.secrets)
+# -----------------------------------------------------------------------------  
+# 0. Settings & Secrets  
+# -----------------------------------------------------------------------------
+st.set_page_config(page_title="MVP IA Contábil Avançado", layout="wide")
 
-# Carrega credenciais do Dropbox
 dbx_cfg      = st.secrets["dropbox"]
 ACCESS_TOKEN = dbx_cfg["access_token"]
 BASE_PATH    = dbx_cfg["base_path"].rstrip("/")
 dbx = dropbox.Dropbox(ACCESS_TOKEN)
 
-# 1. Ingestão
+openai.api_key = st.secrets["openai"]["api_key"]
+
+
+# -----------------------------------------------------------------------------  
+# 0.1 Credentials & Authentication  
+# -----------------------------------------------------------------------------
+USERS = {
+    "alice": {"name":"Alice Souza","password":bcrypt.hashpw("senhaAlice".encode(), bcrypt.gensalt()).decode(),"empresa":"JJMAX","role":"user"},
+    "bob":   {"name":"Bob Oliveira","password":bcrypt.hashpw("senhaBob".encode(),   bcrypt.gensalt()).decode(),"empresa":"CICLOMADE","role":"user"},
+    "admin": {"name":"Administrador","password":bcrypt.hashpw("senhaAdmin".encode(), bcrypt.gensalt()).decode(),"empresa":None,"role":"admin"}
+}
+
+credentials = {
+    "usernames": {
+        user: {"name":info["name"], "password":info["password"]}
+        for user, info in USERS.items()
+    }
+}
+
+cfg = st.secrets["auth"]
+authenticator = stauth.Authenticate(
+    credentials,
+    cfg["cookie_name"],
+    cfg["key"],
+    cfg["expiry_days"],
+)
+authenticator.login(location="main")
+
+
+# -----------------------------------------------------------------------------  
+# 1. FAISS Embeddings  
+# -----------------------------------------------------------------------------
+EMBED_INDEX_PATH = "embeddings.index"
+META_PATH        = "embeddings_meta.pkl"
+EMB_DIM          = 1536
+
+def build_or_load_index():
+    try:
+        index = faiss.read_index(EMBED_INDEX_PATH)
+        meta  = pickle.load(open(META_PATH, "rb"))
+    except:
+        index = faiss.IndexFlatL2(EMB_DIM)
+        meta  = []
+    return index, meta
+
+def persist_index(index, meta):
+    faiss.write_index(index, EMBED_INDEX_PATH)
+    pickle.dump(meta, open(META_PATH, "wb"))
+
+def semantic_search(query: str, index, meta, top_k=5):
+    q_emb = openai.Embedding.create(input=[query], model="text-embedding-ada-002")["data"][0]["embedding"]
+    D, I  = index.search(np.array([q_emb], dtype="float32"), top_k)
+    return [meta[i] for i in I[0] if 0 <= i < len(meta)]
+
+def upsert_embedding(question: str, answer: str, index, meta):
+    emb = openai.Embedding.create(
+        input=[question+" ||| "+answer], model="text-embedding-ada-002"
+    )["data"][0]["embedding"]
+    index.add(np.array([emb], dtype="float32"))
+    meta.append({"q": question, "a": answer})
+    persist_index(index, meta)
+
+index, meta = build_or_load_index()
+
+# -----------------------------------------------------------------------------  
+# 2. Ingestão & Normalização & Mapeamento  
+# -----------------------------------------------------------------------------
+COMMON_COLUMNS = {
+    "nome_empresa":"company", "descrição":"account", "descricao":"account",
+    "valor":"amount", "saldo_atual":"amount"
+}
+
+ACCOUNT_MAP = {
+        # demonstração de resultados (DRE)
+    "RECEITA BRUTA DE VENDAS E MERCADORIAS":        "gross_revenue",
+    "RECEITA DE PRESTAÇÃO DE SERVIÇOS":            "service_revenue",
+    "(-) IMPOSTOS SOBRE VENDAS E SERVIÇOS":        "taxes_on_sales",
+    "RECEITA LÍQUIDA":                             "net_revenue",
+    "(-) MATERIAL APLICADO":                       "materials_applied",
+    "(-) DEPRECIAÇÕES, AMORTIZAÇÕES E EXAUSTÕES":  "depreciation_amortization",
+    "(-) COMBUSTÍVEIS E ENERGIA ELÉTRICA":         "fuel_and_energy",
+    "(-) CUSTOS DOS PRODUTOS VENDIDOS":            "cogs",
+    "LUCRO BRUTO":                                 "gross_profit",
+    "(-) DESPESAS OPERACIONAIS":                   "operating_expenses",
+    "(-) DESPESAS COM PESSOAL (VENDAS)":           "personnel_expenses_sales",
+    "(-) DESPESAS COM ENTREGA":                    "delivery_expenses",
+    "(-) DESPESAS COM VIAGENS E REPRESENTAÇÕES":   "travel_and_representation_expenses",
+    "(-) DESPESAS GERAIS (VENDAS)":                "general_sales_expenses",
+    "(-) DESPESAS COM PESSOAL (ADMINISTRATIVAS)":  "personnel_expenses_admin",
+    "(-) IMPOSTOS, TAXAS E CONTRIBUIÇÕES":         "taxes_fees_contributions",
+    "(-) DESPESAS GERAIS (ADMINISTRATIVAS)":       "general_admin_expenses",
+    "(-) DESPESAS FINANCEIRAS":                    "financial_expenses",
+    "JUROS E DESCONTOS":                           "interest_and_discounts",
+    "RECEITAS DIVERSAS":                           "other_income",
+    "RESULTADO OPERACIONAL":                       "operating_result",
+    "RESULTADO ANTES DO IR E CSL":                 "ebit_before_tax_and_social",
+    "LUCRO LÍQUIDO DO EXERCÍCIO":                  "net_income",
+    
+    # balanço patrimonial (ativo)
+    "ATIVO CIRCULANTE":                            "current_assets",
+    "DISPONÍVEL":                                  "cash",
+    "BANCOS CONTA MOVIMENTO":                      "bank_accounts",
+    "BANCO SICOOB":                                "bank_sicoob",
+    "CLIENTES":                                    "accounts_receivable",
+    "DUPLICATAS A RECEBER":                        "accounts_receivable",
+    "OUTROS CRÉDITOS":                             "other_receivables",
+    "TRIBUTOS A RECUPERAR/COMPENSAR":              "taxes_recoverable",
+    "IPI A RECUPERAR":                             "taxes_recoverable_ipi",
+    "ICMS A RECUPERAR":                            "taxes_recoverable_icms",
+    "COFINS A RECUPERAR":                          "taxes_recoverable_cofins",
+    "PIS A RECUPERAR":                             "taxes_recoverable_pis",
+    "ESTOQUE":                                     "inventory",
+    "MERCADORIAS, PRODUTOS E INSUMOS":             "inventory_goods_and_supplies",
+    "MERCADORIAS PARA REVENDA":                    "inventory_for_resale",
+    "MATÉRIA-PRIMA":                                "inventory_raw_materials",
+    "ATIVO NÃO-CIRCULANTE":                        "non_current_assets",
+    "SÓCIOS, ADMINISTRADORES E PESSOAS LIGADA":    "related_party_receivables",
+    "CONTA CORRENTE DE SÓCIOS":                    "shareholder_current_accounts",
+    "IMOBILIZADO":                                 "fixed_assets",
+    "IMÓVEIS":                                     "fixed_assets_properties",
+    "TERRENOS":                                    "fixed_assets_land",
+    "MÓVEIS E UTENSÍLIOS":                         "fixed_assets_furniture_and_fixtures",
+    "MÁQUINAS, EQUIPAMENTOS E FERRAMENTAS":        "fixed_assets_machinery_and_tools",
+    "MÁQUINAS E EQUIPAMENTOS":                     "fixed_assets_machinery_and_equipment",
+    "VEÍCULOS":                                    "fixed_assets_vehicles",
+    "OUTRAS IMOBILIZACOES":                        "fixed_assets_other",
+    "COMPUTADORES E ACESSORIOS":                   "fixed_assets_computers_and_accessories",
+    "IMOBILIZADO EM ANDAMENTO":                    "fixed_assets_in_progress",
+    "MÁQUINAS E EQUIPAMENTOS (EM ANDAMENTO)":      "fixed_assets_machinery_in_progress",
+    "(-) DEPRECIAÇÕES, AMORT. E EXAUS. ACUMUL":     "accumulated_depreciation",
+    "(-) DEPRECIAÇÕES DE MÓVEIS E UTENSÍLIOS":     "accumulated_depr_furniture_and_fixtures",
+    "(-) DEPRECIAÇÕES DE MÁQUINAS, EQUIP. FER":    "accumulated_depr_machinery",
+    "(-) DEPRECIAÇÕES DE VEÍCULOS":                "accumulated_depr_vehicles",
+    "(-) DEPREC. COMPUTADORES E ACESSORIOS":       "accumulated_depr_computers",
+    
+    # balanço patrimonial (passivo)
+    "PASSIVO CIRCULANTE":                          "current_liabilities",
+    "FORNECEDORES":                                "accounts_payable",
+    "OBRIGAÇÕES TRIBUTÁRIAS":                      "tax_liabilities",
+    "IMPOSTOS E CONTRIBUIÇÕES A RECOLHER":         "tax_liabilities",
+    "IPI A RECOLHER":                              "tax_liabilities_ipi",
+    "IMPOSTO DE RENDA A RECOLHER":                 "tax_liabilities_income_tax",
+    "CONTRIBUIÇÃO SOCIAL A RECOLHER":              "tax_liabilities_social_contribution",
+    "IRRF A RECOLHER":                             "tax_liabilities_irrf",
+    "OBRIGAÇÕES TRABALHISTA E PREVIDENCIÁRIA":     "labor_and_social_liabilities",
+    "OBRIGAÇÕES COM O PESSOAL":                    "personnel_liabilities",
+    "SALÁRIOS E ORDENADOS A PAGAR":                "salaries_payable",
+    "PRÓ-LABORE A PAGAR":                          "pro_labore_payable",
+    "PARTIC DE LUCROS A PAGAR":                    "profit_sharing_payable",
+    "OBRIGAÇÕES SOCIAIS":                          "social_obligations",
+    "INSS A RECOLHER":                             "social_security_liabilities",
+    "FGTS A RECOLHER":                             "fgts_liabilities",
+    "IRRF SOBRE SALÁRIOS":                         "irrf_on_salaries",
+    "PROVISÕES":                                   "provisions",
+    "PROVISÕES PARA FÉRIAS":                       "provisions_vacation",
+    "INSS SOBRE PROVISÕES PARA FÉRIAS":            "inss_on_vacation_provisions",
+    "FGTS SOBRE PROVISÕES PARA FÉRIAS":            "fgts_on_vacation_provisions",
+    "PIS SOBRE PROVISÕES PARA 13º SALÁRIO":        "pis_on_13th_salary_provisions",
+    "OUTRAS OBRIGAÇÕES":                           "other_liabilities",
+    "CONTAS A PAGAR":                              "accounts_payable",
+    "CARTÃO DE CREDITO SICOOB A PAGAR":            "credit_card_payable_sicoob",
+    "TRANSITÓRIA - CARTÃO DE CREDITO SICOOB A PAGAR": "transitory_credit_card_payable_sicoob",
+    "PASSIVO NÃO-CIRCULANTE":                      "non_current_liabilities",
+    "ECOLÓGICA IND. E COM. DE PROD. SUST.":        "other_non_current_liabilities",
+    "LUCROS OU PREJUÍZOS ACUMULADOS":              "retained_earnings",
+    "LUCROS ACUMULADOS":                           "retained_earnings",
+    "(-) PREJUÍZOS ACUMULADOS":                    "accumulated_losses",
+    
+    # totais do BP
+    "ATIVO":                                       "total_assets",
+    "PASSIVO":                                     "total_liabilities",
+    "PATRIMÔNIO LÍQUIDO":                          "equity"
+}
+
+ACCOUNT_MAP.update({
+    # DRE (Income Statement) – JJMAX
+    "(-) CANCELAMENTO E DEVOLUÇÕES":              "sales_returns",
+    "(-) CUSTOS DE MERCADORIAS ADQUIRIDAS":       "cogs",
+    "(-) CUSTOS DAS MERCADORIAS VENDIDAS":        "cogs",
+    "(-) DESPESAS COM PESSOAL":                   "personnel_expenses_admin",
+    "(-) ALUGUÉIS E ARRENDAMENTOS":               "rent_and_lease_expenses",
+    "PREJUÍZO DO EXERCÍCIO":                      "net_income",
+
+    # Balanço (Balance Sheet) – JJMAX
+    "ADIANTAMENTOS DE CLIENTES":                  "advances_from_customers",
+    "ADIANTAMENTOS A FORNECEDORES":               "advances_to_suppliers",
+    "CAPITAL SOCIAL":                             "share_capital",
+    "CAPITAL SUBSCRITO":                          "subscribed_capital",
+    "(-) CAPITAL A INTEGRALIZAR":                 "capital_not_paid",
+    "EMPRÉSTIMOS":                                "loans_payable",
+    "EMPRÉSTIMO BANCO ITAU":                      "loans_payable",
+    "EMPRÉSTIMOS E FINANCIAMENTOS":               "loans_and_financing",
+    "CAIXA":                                      "cash",
+    "CAIXA GERAL":                                "cash",
+    "BANCO DO BRASIL":                            "bank_accounts",
+    "BANCO ITAU UNIBANCO":                        "bank_accounts",
+    "BANCO ITAU S/A":                             "bank_accounts",
+    "CAIXA ECONÔMICA FEDERAL":                    "bank_accounts",
+
+    # Ativo
+    "ATIVO CIRCULANTE DISPONÍVEL":                 "current_assets",
+    "PRODUTOS ACABADOS":                           "inventory_finished_goods",
+    "APLICAÇÕES FINANCEIRAS LIQUIDEZ IMEDIATA":    "cash_equivalents",
+    "IRRF S/ APLICAÇÕES FINANCEIRAS A RECUPERAR":  "taxes_recoverable_financial",
+
+    # Estoques / remessas / consignações
+    "REMESSA EM CONSIGNAÇÃO":                      "inventory_on_consignment",
+    "SIMPLES REMESSA":                             "simples_remittance",
+    "(-) SIMPLES REMESSA":                         "simples_remittance",
+
+    # Tributos a recolher
+    "PIS A RECOLHER":                              "tax_liabilities_pis",
+    "COFINS A RECOLHER":                           "tax_liabilities_cofins",
+    "ICMS A RECOLHER":                             "tax_liabilities_icms",
+    "ICMS SUBSTITUIÇÃO TRIBUTÁRIA A RECOLHER":      "tax_liabilities_icms_substitution",
+    "IRRF S/ ALUGUEL A RECOLHER":                  "tax_liabilities_irrf_rent",
+    "SIMPLES NACIONAL A RECOLHER":                  "tax_liabilities_simples",
+    "PARCELAMENTO DE IMPOSTOS FEDERAIS":           "tax_liabilities_federal_installments",
+    "PARCELAMENTO DE IMPOSTOS ESTADUAIS":          "tax_liabilities_state_installments",
+    "CONTRIBUIÇÃO SINDICAL A RECOLHER":            "tax_liabilities_union",
+
+    # Imobilizado / outros ativos não-correntes
+    "CONSORCIOS":                                  "other_non_current_assets",
+    "TRANSITORIA DE IMOBILIZADO":                  "other_non_current_assets",
+    "CONTAS DE COMPENSAÇÃO ATIVA":                 "memorandum_accounts",
+
+    # Adiantamentos
+    "ADIANTAMENTOS A CLIENTES":                    "advances_from_customers",
+    "ADIANTAMENTOS DE CLIENTES":                   "advances_from_customers",
+
+    # Despesas diversas
+    "ALUGUÉIS A PAGAR":                           "rent_and_lease_expenses",
+
+    # Capital
+    "CAPITAL A INTEGRALIZAR":                      "capital_not_paid",
+
+    # Contas de sócios / partes relacionadas
+    "CONTA CORRENTE SÓCIOS":                       "shareholder_current_accounts",
+    "OUTROS DÉBITOS COM SÓCIOS, ADM, PESSOAS":     "related_party_liabilities",
+    "CONTROLADORA, CONTROLADAS E COLIGADAS":       "related_party_receivables",
+    "ADVANCED LABS":                               "related_party_receivables",
+    "FARMACIA DE MANIPULAÇ GRACIOSA":              "related_party_receivables",
+    "FARMACIA MAJESTIC LTDA":                      "related_party_receivables",
+    "LAYNESKIN":                                   "related_party_receivables",
+    "LAYNESKIN DERMOCOSMESTICOS LTDA":             "related_party_receivables",
+    "MERCADO OFICIAL":                             "related_party_receivables",
+    "OFICIAL MF ADMINISTRAÇ E PARTIC":             "related_party_receivables",
+    "OFH INVESTIMENTOS E PARTICIPAÇ":              "related_party_receivables",
+    "ELAINE VERISSIMO":                            "related_party_liabilities",
+
+    "IRRF S/ FOLHA A RECOLHER":              "tax_liabilities_irrf",
+    "ENERGIA ELÉTRICA, ÁGUA E TELEFONE A PAGA": "utilities_payable"
+})
+
 @st.cache_data
 def load_csv_from_dropbox(filename: str, expected_cols: list[str]) -> pd.DataFrame | None:
     path = f"{BASE_PATH}/{filename}"
     try:
         _, res = dbx.files_download(path=path)
     except dropbox.exceptions.ApiError as e:
-        st.error(f"Não foi possível baixar {filename}: {e.error}")
+        st.warning(f"Arquivo não encontrado: {filename}")
         return None
     df = pd.read_csv(BytesIO(res.content))
-    missing = set(expected_cols) - set(df.columns)
-    if missing:
+    if missing := set(expected_cols) - set(df.columns):
         st.error(f"Colunas faltando em {filename}: {missing}")
         return None
     return df
 
-# 2. Normalização e Limpeza (unchanged)
-COMMON_COLUMNS = {
-    "nome_empresa":"company", "descrição":"account", "descricao":"account",
-    "valor":"amount", "saldo_atual":"amount"
-}
-ACCOUNT_MAP = {
-    # DRE – Receitas
-    "RECEITA BRUTA DE VENDAS E MERCADORIAS":        "receita_operacional",
-    "RECEITA DE PRESTAÇÃO DE SERVIÇOS":            "receita_operacional",
-    "(-) IMPOSTOS SOBRE VENDAS E SERVIÇOS":        "impostos_operacionais",
-    "RECEITA LÍQUIDA":                             "receita_liquida",
-
-    # DRE – Custos
-    "(-) MATERIAL APLICADO":                       "custo_material",
-    "(-) DEPRECIAÇÕES, AMORTIZAÇÕES E EXAUSTÕES":  "custo_depreciacao",
-    "(-) COMBUSTÍVEIS E ENERGIA ELÉTRICA":         "custo_energia",
-    "(-) CUSTOS DOS PRODUTOS VENDIDOS":            "custo_vendas",
-    "LUCRO BRUTO":                                 "lucro_bruto",
-
-    # DRE – Despesas Operacionais
-    "(-) DESPESAS OPERACIONAIS":                   "despesas_operacionais",
-    "(-) DESPESAS COM PESSOAL (VENDAS)":           "despesa_pessoal_vendas",
-    "(-) DESPESAS COM ENTREGA":                    "despesa_entrega",
-    "(-) DESPESAS COM VIAGENS E REPRESENTAÇÕES":   "despesa_viagens",
-    "(-) DESPESAS GERAIS (VENDAS)":                "despesa_vendas_geral",
-    "(-) DESPESAS COM PESSOAL (ADMINISTRATIVAS)":  "despesa_pessoal_admin",
-    "(-) IMPOSTOS, TAXAS E CONTRIBUIÇÕES":         "despesa_impostos_taxas",
-    "(-) DESPESAS GERAIS (ADMINISTRATIVAS)":       "despesa_admin_geral",
-    "(-) DESPESAS FINANCEIRAS":                    "despesa_financeira",
-
-    # DRE – Receitas e Descontos Financeiros
-    "JUROS E DESCONTOS":                           "receita_financeira",
-    "RECEITAS DIVERSAS":                           "receita_diversas",
-
-    # DRE – Resultados
-    "RESULTADO OPERACIONAL":                       "resultado_operacional",
-    "RESULTADO ANTES DO IR E CSL":                 "resultado_antes_ir_csll",
-    "LUCRO LÍQUIDO DO EXERCÍCIO":                  "lucro_liquido",
-
-
-    # BALANÇO – Ativo Circulante
-    "ATIVO CIRCULANTE":                            "ativo_circulante",
-    "DISPONÍVEL":                                  "disponivel",
-    "BANCOS CONTA MOVIMENTO":                      "disponivel",
-    "BANCO SICOOB":                                "disponivel",
-    "CLIENTES":                                    "contas_receber",
-    "DUPLICATAS A RECEBER":                        "contas_receber",
-    "OUTROS CRÉDITOS":                             "outros_creditos",
-    "TRIBUTOS A RECUPERAR/COMPENSAR":              "tributos_recuperar",
-    "IPI A RECUPERAR":                             "tributos_recuperar",
-    "ICMS A RECUPERAR":                            "tributos_recuperar",
-    "COFINS A RECUPERAR":                          "tributos_recuperar",
-    "PIS A RECUPERAR":                             "tributos_recuperar",
-    "ESTOQUE":                                     "estoque",
-    "MERCADORIAS, PRODUTOS E INSUMOS":             "estoque",
-    "MERCADORIAS PARA REVENDA":                    "estoque",
-    "MATÉRIA-PRIMA":                               "estoque",
-
-    # BALANÇO – Ativo Não Circulante / Imobilizado
-    "ATIVO NÃO-CIRCULANTE":                        "ativo_nao_circulante",
-    "SÓCIOS, ADMINISTRADORES E PESSOAS LIGADA":    "conta_socios",
-    "CONTA CORRENTE DE SÓCIOS":                    "conta_socios",
-    "IMOBILIZADO":                                 "imobilizado",
-    "IMÓVEIS":                                     "imobilizado",
-    "TERRENOS":                                    "imobilizado",
-    "MÓVEIS E UTENSÍLIOS":                         "imobilizado",
-    "MÁQUINAS, EQUIPAMENTOS E FERRAMENTAS":        "imobilizado",
-    "MÁQUINAS E EQUIPAMENTOS":                     "imobilizado",
-    "VEÍCULOS":                                    "imobilizado",
-    "OUTRAS IMOBILIZAÇÕES":                        "imobilizado",
-    "COMPUTADORES E ACESSÓRIOS":                   "imobilizado",
-    "IMOBILIZADO EM ANDAMENTO":                    "imobilizado",
-    "MÁQUINAS E EQUIPAMENTOS (EM ANDAMENTO)":      "imobilizado",
-
-    # BALANÇO – Depreciações Acumuladas
-    "(-) DEPRECIAÇÕES, AMORT. E EXAUS. ACUMUL":     "deprec_acum",
-    "(-) DEPRECIAÇÕES DE MÓVEIS E UTENSÍLIOS":     "deprec_acum",
-    "(-) DEPRECIAÇÕES DE MÁQUINAS, EQUIP. FER":    "deprec_acum",
-    "(-) DEPRECIAÇÕES DE VEÍCULOS":                "deprec_acum",
-    "(-) DEPREC. COMPUTADORES E ACESSÓRIOS":       "deprec_acum",
-
-    # BALANÇO – Passivo Circulante
-    "PASSIVO CIRCULANTE":                          "passivo_circulante",
-    "FORNECEDORES":                                "passivo_circulante",
-    "OBRIGAÇÕES TRIBUTÁRIAS":                      "passivo_circulante",
-    "IMPOSTOS E CONTRIBUIÇÕES A RECOLHER":         "passivo_circulante",
-    "IPI A RECOLHER":                              "passivo_circulante",
-    "IMPOSTO DE RENDA A RECOLHER":                 "passivo_circulante",
-    "CONTRIBUIÇÃO SOCIAL A RECOLHER":              "passivo_circulante",
-    "IRRF A RECOLHER":                             "passivo_circulante",
-    "OBRIGAÇÕES TRABALHISTA E PREVIDENCIÁRIA":     "passivo_circulante",
-    "OBRIGAÇÕES COM O PESSOAL":                    "passivo_circulante",
-    "SALÁRIOS E ORDENADOS A PAGAR":                "passivo_circulante",
-    "PRÓ-LABORE A PAGAR":                          "passivo_circulante",
-    "PARTIC DE LUCROS A PAGAR":                    "passivo_circulante",
-    "OBRIGAÇÕES SOCIAIS":                          "passivo_circulante",
-    "INSS A RECOLHER":                             "passivo_circulante",
-    "FGTS A RECOLHER":                             "passivo_circulante",
-    "IRRF SOBRE SALÁRIOS":                         "passivo_circulante",
-    "PROVISÕES":                                   "passivo_circulante",
-    "PROVISÕES PARA FÉRIAS":                       "passivo_circulante",
-    "INSS SOBRE PROVISÕES PARA FÉRIAS":            "passivo_circulante",
-    "FGTS SOBRE PROVISÕES PARA FÉRIAS":            "passivo_circulante",
-    "PIS SOBRE PROVISÕES PARA 13º SALÁRIO":        "passivo_circulante",
-    "OUTRAS OBRIGAÇÕES":                           "passivo_circulante",
-    "CONTAS A PAGAR":                              "passivo_circulante",
-    "CARTÃO DE CRÉDITO SICOOB A PAGAR":            "passivo_circulante",
-    "TRANSITÓRIA - CARTÃO DE CRÉDITO SICOOB A PAGAR":"passivo_circulante",
-    "PASSIVO NÃO-CIRCULANTE":                      "passivo_nao_circulante",
-
-    # BALANÇO – Patrimônio Líquido
-    "LUCROS OU PREJUÍZOS ACUMULADOS":              "patrimonio_liquido",
-    "LUCROS ACUMULADOS":                           "patrimonio_liquido",
-    "(-) PREJUÍZOS ACUMULADOS":                    "patrimonio_liquido",
-    "PATRIMÔNIO LÍQUIDO":                          "patrimonio_liquido",
-
-    # Totais para validação
-    "ATIVO":                                       "total_ativo",
-    "PASSIVO":                                     "total_passivo"
-}
 def standardize_columns(df: pd.DataFrame) -> pd.DataFrame:
     df = df.rename(columns=COMMON_COLUMNS).copy()
     df["amount"] = pd.to_numeric(df["amount"], errors="coerce")
@@ -160,235 +300,217 @@ def add_metadata(df, stmt, ref_date, cid):
     df["company_id"] = cid
     return df
 
-def apply_account_mapping(df):
-    df["account_std"] = df["account"].map(ACCOUNT_MAP).fillna("outros")
+def apply_account_mapping(df: pd.DataFrame) -> pd.DataFrame:
+    df["account_std"] = df["account"].map(ACCOUNT_MAP)
+    unmapped = set(df["account"]) - set(ACCOUNT_MAP.keys())
+    if unmapped:
+        st.warning(f"⚠️ Contas não mapeadas: {unmapped}")
+    df["account_std"] = df["account_std"].fillna("outros")
     return df
 
 def clean_data(df):
-    df = df.dropna(subset=["amount"])
-    df = df[df["amount"] != 0]
-    df = df.drop_duplicates()
-    return df
+    return df.dropna(subset=["amount"]).query("amount != 0").drop_duplicates()
 
-# 3. Fluxo Streamlit
-st.title("MVP IA Contábil — Etapa 2: Indicadores")
+def load_and_clean(company_id: str, date_str: str) -> tuple[pd.DataFrame, pd.DataFrame] | tuple[None, None]:
+    dre_raw = load_csv_from_dropbox(f"DRE_{date_str}_{company_id}.csv",
+                                    ["nome_empresa","descrição","valor"])
+    bal_raw = load_csv_from_dropbox(f"BALANCO_{date_str}_{company_id}.csv",
+                                    ["nome_empresa","descrição","saldo_atual"])
+    if dre_raw is None or bal_raw is None:
+        return None, None
 
-empresa_id = st.text_input("ID da Empresa", "CICLOMADE")
-data_ref   = st.date_input("Data de Referência", value=pd.to_datetime("2024-12-31"))
-date_str   = data_ref.strftime("%Y-%m-%d")
-
-dre_raw = load_csv_from_dropbox(f"DRE_{date_str}_{empresa_id}.csv",
-                                ["nome_empresa","descrição","valor"])
-bal_raw = load_csv_from_dropbox(f"BALANCO_{date_str}_{empresa_id}.csv",
-                                ["nome_empresa","descrição","saldo_atual"])
-if dre_raw is None or bal_raw is None:
-    st.stop()
-
-dre = clean_data(apply_account_mapping(
-        add_metadata(standardize_columns(dre_raw),
-                     "income_statement", data_ref, empresa_id)))
-bal = clean_data(apply_account_mapping(
-        add_metadata(standardize_columns(bal_raw),
-                     "balance_sheet", data_ref, empresa_id)))
-
-df_all = pd.concat([bal, dre], ignore_index=True)
-
-# 4. Etapa 2 — Cálculo de Indicadores
-
-# 4.1 Consolida DRE
-dre_sum = dre.groupby("account_std")["amount"].sum()
-
-receita_liq = dre_sum.get("receita_liquida", 0)
-custo_vendas = dre_sum.get("custo_vendas", 0)
-lucro_bruto = receita_liq - custo_vendas
-despesas_op = dre_sum.get("despesas_operacionais", 0)
-ebitda = lucro_bruto - despesas_op
-lucro_liq = dre_sum.get("lucro_liquido", 0)
-
-# 4.2 Consolida Balanço
-bal_sum = bal.groupby("account_std")["amount"].sum()
-
-ativo_circ = bal_sum.get("ativo_circulante", 0)
-ativo_nc   = bal_sum.get("ativo_nao_circulante", 0)
-pass_circ  = bal_sum.get("passivo_circulante", 0)
-pass_nc    = bal_sum.get("passivo_nao_circulante", 0)
-pat_liq    = bal_sum.get("patrimonio_liquido", 0)
-estoque    = bal_sum.get("estoque", 0)
-
-total_ativo = ativo_circ + ativo_nc
-total_pass  = pass_circ + pass_nc
-bal_valida = abs(total_ativo - (total_pass + pat_liq)) < 1e-2
-
-# 4.3 Principais índices
-liquidez_corrente = ativo_circ / pass_circ if pass_circ else None
-liquidez_seca    = (ativo_circ - estoque) / pass_circ if pass_circ else None
-endividamento    = total_pass / total_ativo if total_ativo else None
-roa              = lucro_liq / total_ativo if total_ativo else None
-roe              = lucro_liq / pat_liq if pat_liq else None
-
-# 5. Exibição no Streamlit
-
-st.header("Indicadores do DRE")
-st.metric("Lucro Bruto", f"R$ {lucro_bruto:,.2f}")
-st.metric("EBITDA",       f"R$ {ebitda:,.2f}")
-st.metric("Lucro Líquido",f"R$ {lucro_liq:,.2f}")
-
-st.header("Indicadores do Balanço")
-st.metric("Liquidez Corrente", f"{liquidez_corrente:.2f}")
-st.metric("Liquidez Seca",     f"{liquidez_seca:.2f}")
-st.metric("Endividamento",     f"{endividamento:.2%}")
-st.write(f"Ativo = Passivo + PL? {'✅' if bal_valida else '❌'}")
-
-st.header("Rentabilidades")
-st.metric("ROA (Lucro/Ativo)", f"{roa:.2%}")
-st.metric("ROE (Lucro/PL)",    f"{roe:.2%}")
-
-# 6. Exportação (opcional CSV/Excel)
-report = pd.DataFrame({
-    "Indicador": ["Lucro Bruto","EBITDA","Lucro Líquido",
-                  "Liquidez Corrente","Liquidez Seca","Endividamento",
-                  "ROA","ROE"],
-    "Valor":     [lucro_bruto, ebitda, lucro_liq,
-                  liquidez_corrente, liquidez_seca, endividamento,
-                  roa, roe]
-})
-csv = report.to_csv(index=False).encode("utf-8")
-st.download_button("📥 Baixar Indicadores (CSV)", csv, "indicadores.csv")
-
-# --- 7. Módulo de Perguntas & Respostas com IA ----------------------
-
-# 7.1 Carrega chave da API
-openai.api_key = st.secrets["openai"]["api_key"]
-
-# 7.2 Templates de prompt (permanece igual)
-PROMPT_TEMPLATES = {
-    "trend_ebitda": 'Mostre a evolução do EBITDA considerando o valor atual de EBITDA ({ebitda:.2f}).',
-    "liquidity_date": 'Qual a liquidez corrente em {date} considerando ativo circulante ({ativo_circ:.2f}) e passivo circulante ({pass_circ:.2f})?'
-}
-
-def format_indicators_table(df: pd.DataFrame) -> str:
-    """Gera um mini-relatório textual dos indicadores."""
-    lines = []
-    for _, row in df.iterrows():
-        val = row["Valor"]
-        if isinstance(val, float):
-            lines.append(f"- {row['Indicador']}: {val:,.2f}")
-        else:
-            lines.append(f"- {row['Indicador']}: {val}")
-    return "\n".join(lines)
-
-def ask_question(question: str, report_df: pd.DataFrame) -> str:
-    """
-    Recebe uma pergunta e o DataFrame de indicadores.
-    Tenta usar openai.chat.completions (SDK >=1.0.0);
-    em fallback, usa openai.ChatCompletion (SDK <1.0.0).
-    """
-    tabela = format_indicators_table(report_df)
-    prompt = f"""
-Você é um assistente contábil. Seguem os indicadores calculados na data de referência:
-
-{tabela}
-
-Pergunta: {question}
-
-Forneça uma resposta objetiva e fundamentada nos números acima.
-"""
-    try:
-        # primeiro, tentamos a interface v1+ (openai>=1.0.0)
-        completion = openai.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=[
-                {"role": "system", "content": "Você é um assistente contábil especializado em indicadores financeiros."},
-                {"role": "user",   "content": prompt}
-            ],
-            temperature=0.0,
-            max_tokens=250
+    dre = clean_data(
+        apply_account_mapping(
+            add_metadata(standardize_columns(dre_raw), "income_statement", date_str, company_id)
         )
-        return completion.choices[0].message.content.strip()
-    except AttributeError:
-        # fallback para versões antigas (openai<1.0.0)
-        try:
-            completion = openai.ChatCompletion.create(
+    )
+    bal = clean_data(
+        apply_account_mapping(
+            add_metadata(standardize_columns(bal_raw), "balance_sheet",    date_str, company_id)
+        )
+    )
+    return dre, bal
+
+# -----------------------------------------------------------------------------
+# 3. Cálculo de Indicadores
+# -----------------------------------------------------------------------------
+def compute_indicators(dre: pd.DataFrame, bal: pd.DataFrame) -> pd.DataFrame:
+    dre_sum       = dre.groupby("account_std")["amount"].sum()
+    receita_liq   = dre_sum.get("net_revenue", 0)
+    custo_vendas  = dre_sum.get("cogs", 0)
+    lucro_bruto   = dre_sum.get("gross_profit", receita_liq - custo_vendas)
+    despesas_op   = dre_sum.get("operating_expenses", 0)
+    ebitda        = lucro_bruto - despesas_op
+    lucro_liq     = dre_sum.get("net_income", 0)
+
+    bal_sum        = bal.groupby("account_std")["amount"].sum()
+    ativo_circ     = bal_sum.get("current_assets", 0)
+    estoque        = bal_sum.get("inventory", 0)
+    pass_circ      = bal_sum.get("current_liabilities", 0)
+    non_current    = bal_sum.get("non_current_assets", 0)
+    total_ativo    = bal_sum.get("total_assets", ativo_circ + non_current)
+    non_current_li = bal_sum.get("non_current_liabilities", 0)
+    pat_liq        = bal_sum.get("equity", 0)
+    total_pass     = pass_circ + non_current_li
+
+    liquidez_corrente = ativo_circ / pass_circ if pass_circ else None
+    liquidez_seca     = (ativo_circ - estoque) / pass_circ if pass_circ else None
+    endividamento     = total_pass / total_ativo if total_ativo else None
+    roa               = lucro_liq / total_ativo if total_ativo else None
+    roe               = lucro_liq / pat_liq if pat_liq else None
+
+    return pd.DataFrame({
+        "Indicador": [
+            "Lucro Bruto", "EBITDA", "Lucro Líquido",
+            "Liquidez Corrente", "Liquidez Seca", "Endividamento",
+            "ROA", "ROE"
+        ],
+        "Valor": [
+            lucro_bruto, ebitda, lucro_liq,
+            liquidez_corrente, liquidez_seca, endividamento,
+            roa, roe
+        ]
+    })
+
+# -----------------------------------------------------------------------------  
+# 4. UI & Navigation  
+# -----------------------------------------------------------------------------
+if st.session_state.get("authentication_status"):
+    username = st.session_state["username"]
+    user_info = USERS[username]
+    role      = user_info["role"]
+    empresa   = user_info["empresa"]
+
+    authenticator.logout("Sair", "sidebar")
+    st.sidebar.success(f"Conectado como {user_info['name']} ({role})")
+
+    available_companies = ["CICLOMADE", "JJMAX"]
+    if role == "admin":
+        session_companies = st.sidebar.multiselect(
+            "Selecione empresas", available_companies, default=available_companies
+        )
+    else:
+        session_companies = [empresa]
+
+    # Filtrar apenas empresas válidas
+    session_companies = [c for c in session_companies if c in available_companies]
+    if not session_companies:
+        st.sidebar.error("Selecione ao menos uma empresa válida.")
+
+    session_date = st.sidebar.date_input("Data de Referência", value=pd.to_datetime("2024-12-31"))
+    date_str = session_date.strftime("%Y-%m-%d")
+
+    company_for_metrics = st.sidebar.selectbox("Empresa para Métricas", session_companies)
+
+    # Carregar dados com tratamento de erros
+    all_dre, all_bal = [], []
+    for comp in session_companies:
+        dre, bal = load_and_clean(comp, date_str)
+        if dre is None or bal is None:
+            st.warning(f"Pulando {comp}: dados não encontrados.")
+            continue
+        all_dre.append(dre)
+        all_bal.append(bal)
+
+    if all_dre and all_bal:
+        df_all = pd.concat(all_dre + all_bal, ignore_index=True)
+    else:
+        df_all = pd.DataFrame()  # vazio
+
+    page = st.sidebar.radio("📊 Navegação", ["Visão Geral", "Dashboards", "Chatbot"])
+
+    if page == "Visão Geral":
+        dre_sel, bal_sel = load_and_clean(company_for_metrics, date_str)
+        if dre_sel is None or bal_sel is None:
+            st.error("Não há dados para Visão Geral.")
+        else:
+            rpt = compute_indicators(dre_sel, bal_sel)
+            st.header(f"🏁 Indicadores {company_for_metrics} em {date_str}")
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Lucro Bruto",  f"R$ {rpt.loc[0,'Valor']:,.2f}")
+            c2.metric("EBITDA",        f"R$ {rpt.loc[1,'Valor']:,.2f}")
+            c3.metric("Lucro Líquido", f"R$ {rpt.loc[2,'Valor']:,.2f}")
+            c4, c5, c6 = st.columns(3)
+            c4.metric("Liquidez Corrente", f"{rpt.loc[3,'Valor']:.2f}")
+            c5.metric("Endividamento",     f"{rpt.loc[5,'Valor']:.2%}")
+            c6.metric("ROE",               f"{rpt.loc[7,'Valor']:.2%}")
+
+            st.markdown("---")
+            st.dataframe(rpt.style.format({"Valor":"R$ {:,.2f}"}), use_container_width=True)
+
+    elif page == "Dashboards":
+        if df_all.empty:
+            st.info("Nenhum dado disponível para as seleções atuais.")
+        else:
+            st.header("📈 Dashboards")
+            # Exemplo de gráfico Altair
+            chart = alt.Chart(df_all).mark_bar().encode(
+                x="account_std:N",
+                y="amount:Q",
+                color="company_id:N",
+                tooltip=["company_id","account_std","amount"]
+            )
+            st.altair_chart(chart, use_container_width=True)
+
+    else:  # Chatbot
+        st.header(f"🤖 Chatbot Contábil - {company_for_metrics}")
+        pergunta = st.text_area("Pergunta sobre os indicadores")
+        if st.button("Enviar") and pergunta:
+            # 1) Contextos semânticos
+            contexts = semantic_search(pergunta, index, meta, top_k=3)
+            ctx_txt   = "\n".join(f"Q: {c['q']}\nA: {c['a']}" for c in contexts)
+
+            # 2) Carrega dados brutos direto do CSV no Dropbox
+            dre_raw = load_csv_from_dropbox(
+                f"DRE_{date_str}_{company_for_metrics}.csv",
+                ["nome_empresa","descrição","valor"]
+            )
+            bal_raw = load_csv_from_dropbox(
+                f"BALANCO_{date_str}_{company_for_metrics}.csv",
+                ["nome_empresa","descrição","saldo_atual"]
+            )
+            if dre_raw is None or bal_raw is None:
+                st.error("Não foi possível carregar os dados brutos.")
+                st.stop()
+
+            # 3) Converte para texto CSV
+            dre_csv = dre_raw.to_csv(index=False)
+            bal_csv = bal_raw.to_csv(index=False)
+
+            # 4) Monta prompt usando os dados brutos
+            prompt = f"""
+Você é um assistente contábil.
+
+Aqui estão os dados brutos da Demonstração de Resultados (DRE):
+{dre_csv}
+
+E aqui os dados brutos do Balanço Patrimonial:
+{bal_csv}
+
+Contextos anteriores (semânticos):
+{ctx_txt}
+
+Pergunta: {pergunta}
+
+Responda de forma objetiva e fundamentada **nos dados brutos acima**.
+"""
+
+            # 5) Chama a API OpenAI
+            response = openai.ChatCompletion.create(
                 model="gpt-3.5-turbo",
                 messages=[
-                    {"role": "system", "content": "Você é um assistente contábil especializado em indicadores financeiros."},
-                    {"role": "user",   "content": prompt}
+                    {"role":"system","content":"Assistente contábil de indicadores."},
+                    {"role":"user","content":prompt}
                 ],
-                temperature=0.0,
-                max_tokens=250
-            )
-            return completion.choices[0].message.content.strip()
-        except Exception as e2:
-            return f"🚨 Erro na interface antiga do SDK OpenAI: {e2}"
-    except Exception as e:
-        return f"🚨 Erro ao consultar IA: {e}"
+                temperature=0
+            ).choices[0].message.content.strip()
 
-# --- 8. Interface Interativa com Navegação por Páginas ---
+            st.markdown(response)
 
-# configurações no sidebar
-st.sidebar.title("📊 Navegação")
-page = st.sidebar.radio("Escolha a página", ["Visão Geral", "Dashboards", "Chatbot"])
+            # 6) Armazena embedding
+            upsert_embedding(pergunta, response, index, meta)
 
-# Visão Geral: resumo e botão de refresh
-if page == "Visão Geral":
-    st.header("🏁 Visão Geral")
-    st.markdown(f"**Empresa:** {empresa_id}   \n**Data:** {date_str}")
-
-    if st.sidebar.button("🔄 Atualizar Indicadores"):
-        st.experimental_rerun()
-
-    st.subheader("Principais Métricas")
-    cols = st.columns(3)
-    cols[0].metric("Lucro Bruto",     f"R$ {lucro_bruto:,.2f}")
-    cols[1].metric("EBITDA",           f"R$ {ebitda:,.2f}")
-    cols[2].metric("Lucro Líquido",    f"R$ {lucro_liq:,.2f}")
-
-    cols2 = st.columns(3)
-    cols2[0].metric("Liquidez Corrente", f"{liquidez_corrente:.2f}")
-    cols2[1].metric("Endividamento",     f"{endividamento:.2%}")
-    cols2[2].metric("ROE",               f"{roe:.2%}")
-
-    st.markdown("---")
-    st.write("Tabela completa de indicadores")
-    st.dataframe(report.style.format({"Valor":"R$ {:,.2f}"}))
-
-# Dashboards: gráficos e tabelas filtráveis
-elif page == "Dashboards":
-    st.header("📈 Dashboards")
-
-    # filtro por tipo de demonstração
-    stmt = st.selectbox("Selecione demonstração", ["income_statement","balance_sheet"])
-    df_view = df_all[df_all["statement"] == stmt]
-
-    # filtro por conta-padrão
-    accounts = sorted(df_view["account_std"].unique())
-    sel = st.multiselect("Filtrar contas", accounts, default=accounts)
-    df_filt = df_view[df_view["account_std"].isin(sel)]
-
-    st.subheader("Tabela Filtrada")
-    st.dataframe(df_filt[["account_std","amount"]])
-
-    st.subheader("Gráfico de Barras por Conta")
-    bar = (
-        alt.Chart(df_filt.groupby("account_std")["amount"].sum().reset_index())
-        .mark_bar()
-        .encode(x=alt.X("account_std:N", sort="-y"), y="amount:Q", tooltip=["account_std","amount"])
-        .properties(width=700)
-    )
-    st.altair_chart(bar, use_container_width=True)
-
-    st.markdown("---")
-    st.subheader("Evolução Temporal (exemplo único ponto)")
-    # caso tenha vários períodos, carregue vários df_all e plote linha
-    st.write("Para ver evolução, carregue múltiplas datas e gere time-series.")
-# Chatbot: área de texto e respostas da IA
+elif st.session_state.get("authentication_status") is False:
+    st.error("Usuário ou senha incorretos")
 else:
-    st.header("🤖 Chatbot Contábil")
-    pergunta = st.text_area("Digite sua pergunta sobre os indicadores acima")
-    if st.button("Enviar"):
-        if not pergunta:
-            st.error("Insira sua pergunta antes de enviar.")
-        else:
-            with st.spinner("🔍 Consultando IA…"):
-                resposta = ask_question(pergunta, report)
-            st.markdown(resposta)
+    st.info("Por favor, faça login para continuar")
