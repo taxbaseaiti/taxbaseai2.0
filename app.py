@@ -563,6 +563,9 @@ if st.session_state.get("authentication_status"):
             """,
             unsafe_allow_html=True
         )
+
+        def enqueue_prompt(q: str):
+            st.session_state["queued_prompt"] = q
         
         st.header(f"🤖 Chatbot Contábil - {company_for_metrics}")
 
@@ -580,8 +583,11 @@ if st.session_state.get("authentication_status"):
                 st.markdown(msg["content"])
         st.markdown('</div>', unsafe_allow_html=True)
 
+        queued = st.session_state.pop("queued_prompt", None)
+        prompt = queued if queued else st.chat_input("Digite sua pergunta sobre os indicadores...")
+
         # Entrada do Usuário
-        if prompt := st.chat_input("Digite sua pergunta sobre os indicadores..."):
+        if prompt:
             # Adiciona Pergunta do Usuário
             st.session_state.messages.append({"role": "user", "content": prompt, "avatar": "🧑"})
             with st.chat_message("user", avatar="🧑"):
@@ -666,10 +672,7 @@ Responda de forma objetiva e fundamentada nos dados brutos acima.
                     st.markdown("Sugestões para continuar:")
                     cols = st.columns(min(3, len(suggestions)))
                     for i, q in enumerate(suggestions):
-                        if cols[i % len(cols)].button(q, key=f"suggestion_{len(st.session_state.messages)}_{i}"):
-                            # Insere a pergunta selecionada e reprocessa a página
-                            st.session_state.messages.append({"role":"user","content":q,"avatar":"🧑"})
-                            st.experimental_rerun()
+                        cols[i % len(cols)].button(q, key=f"suggestion_{len(st.session_state.messages)}_{i}", on_click=enqueue_prompt, args=(q,))
 
             # Armazena embedding
             upsert_embedding(prompt, resposta, index, meta)
