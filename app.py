@@ -54,7 +54,15 @@ authenticator = stauth.Authenticate(
 
 # ======== ALTERAÇÃO AQUI ========
 # Captura retorno do login
-name, authentication_status, username = authenticator.login(location="main")
+name, authentication_status, username = authenticator.login(
+    location="main",
+    fields={
+        "Form name": "Acesso ao Sistema",
+        "Username": "Usuário",
+        "Password": "Senha",
+        "Login": "Entrar"
+    }
+)
 
 # Se login for bem-sucedido, marca estado e recarrega
 if authentication_status and not st.session_state.get("logged_in", False):
