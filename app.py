@@ -21,7 +21,6 @@ st.set_page_config(page_title="TaxbaseAI - Sua AI Contábil",
                 )
 
 st.image("assets/taxbaseAI_logo.png", width=180)
-st.title("TaxbaseAI - Sua AI Contábil")
 
 dbx_cfg      = st.secrets["dropbox"]
 dbx          = dropbox.Dropbox(
@@ -489,7 +488,6 @@ if st.session_state.get("authentication_status"):
 
     with st.sidebar:
         st.image("assets/taxbaseAI_logo.png", width=120)
-        st.markdown("## TaxbaseAI")
         st.divider()
 
     authenticator.logout("Sair", "sidebar")
