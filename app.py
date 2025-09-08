@@ -35,7 +35,7 @@ client = OpenAI(api_key=st.secrets["openai"]["api_key"])
 # 0.1 Credentials & Authentication with custom login card  
 # -----------------------------------------------------------------------------
 
-# Injeta CSS para centralizar o card e estilizar a logo
+# injeta o CSS do card
 st.markdown(
     """
     <style>
@@ -57,15 +57,22 @@ st.markdown(
       margin-bottom: 1.5rem;
       max-width: 200px;
     }
+    .login-box h3 {
+      color: #FAFAFA;
+      margin-bottom: 1.5rem;
+    }
     </style>
     """,
     unsafe_allow_html=True
 )
 
-# Abre container e card, renderiza logo e formulário de login
+# abre o container + box
 st.markdown('<div class="login-container">', unsafe_allow_html=True)
 st.markdown('<div class="login-box">', unsafe_allow_html=True)
+
+# logo + título
 st.image("assets/taxbaseAI_logo.png", use_container_width=False)
+st.markdown("<h3>Faça login para continuar</h3>", unsafe_allow_html=True)
 
 USERS = {
     "alice": {"name":"Alice Souza","password":bcrypt.hashpw("senhaAlice".encode(), bcrypt.gensalt()).decode(),"empresa":"JJMAX","role":"user"},
@@ -87,16 +94,15 @@ authenticator = stauth.Authenticate(
     cfg["key"],
     cfg["expiry_days"],
 )
-# texto do prompt
-st.markdown("<h3 style='color: black; margin-bottom: 1rem;'>Faça login para continuar</h3>", unsafe_allow_html=True)
 
-# renderiza o formulário dentro do card
-authenticator.login("main")
+# chama o formulário de login em modo 'unrendered', 
+# para podermos posicioná-lo dentro do nosso card
+authenticator.login(location="unrendered")
 
-# fecha divs do card
+# fecha divs
 st.markdown('</div></div>', unsafe_allow_html=True)
 
-# interrompe o app até o usuário autenticar
+# interrompe o resto do app até o usuário autenticar
 if st.session_state.get("authentication_status") is not True:
     st.stop()
 
