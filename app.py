@@ -10,6 +10,7 @@ import altair as alt
 import plotly.express as px
 import faiss
 import pickle
+import time
 
 # -----------------------------------------------------------------------------  
 # 0. Settings & Secrets  
@@ -466,9 +467,9 @@ if st.session_state.get("authentication_status"):
             rpt = compute_indicators(dre_sel, bal_sel)
             st.header(f"🏁 Indicadores {company_for_metrics} em {date_str}")
             c1, c2, c3 = st.columns(3)
-            c1.metric("Lucro Bruto",  f"R$ {rpt.loc[0,'Valor']:,.2f}")
-            c2.metric("EBITDA",        f"R$ {rpt.loc[1,'Valor']:,.2f}")
-            c3.metric("Lucro Líquido", f"R$ {rpt.loc[2,'Valor']:,.2f}")
+            c1.metric("Lucro Bruto",       f"R$ {rpt.loc[0,'Valor']:,.2f}")
+            c2.metric("EBITDA",            f"R$ {rpt.loc[1,'Valor']:,.2f}")
+            c3.metric("Lucro Líquido",     f"R$ {rpt.loc[2,'Valor']:,.2f}")
             c4, c5, c6 = st.columns(3)
             c4.metric("Liquidez Corrente", f"{rpt.loc[3,'Valor']:.2f}")
             c5.metric("Endividamento",     f"{rpt.loc[5,'Valor']:.2%}")
@@ -492,32 +493,91 @@ if st.session_state.get("authentication_status"):
             st.altair_chart(chart, use_container_width=True)
 
     else:  # Chatbot
-        st.header(f"🤖 Chatbot Contábil - {company_for_metrics}")
-        pergunta = st.text_area("Pergunta sobre os indicadores")
-        if st.button("Enviar") and pergunta:
-            # 1) Contextos semânticos
-            contexts = semantic_search(pergunta, index, meta, top_k=3)
-            ctx_txt   = "\n".join(f"Q: {c['q']}\nA: {c['a']}" for c in contexts)
+        st.markdown(
+            """
+            <style>
+            /* Fundo geral */
+            .stApp {
+            background-color: #2c2c2c;
+            font-family: 'Segoe UI', sans-serif;
+            }
 
-            # 2) Carrega dados brutos direto do CSV no Dropbox
+            /* Balões do usuário */
+            .stChatMessage.user {
+            background-color: #d1e7ff;
+            border-radius: 16px;
+            padding: 10px 14px;
+            color: #003366;
+            margin-bottom: 8px;
+            max-width: 80%
+            }
+
+            /* Balões da IA */
+            .stChatMessage.assistant {
+            background-color: #ffffff;
+            border-radius: 16px
+            padding: 10px 14px;
+            border 1px solid #e0e0e0;
+            color: #222;
+            margin-bottom: 8px;
+            max-width: 80%;
+            }
+
+            /* Alternância de lado */
+            .stChatMessage.user {
+            margin-left: auto;
+            }
+            .stChatMessage.assistant {
+            margin-right: auto;
+            }
+            </style>
+            """,
+            unsafe_allow_html=True
+        )
+        
+        st.header(f"🤖 Chatbot Contábil - {company_for_metrics}")
+        # Inicializa Histórico
+        if "messages" not in st.session_state:
+            st.session_state.messages = []
+        
+        # Renderiza Histórico com Avatar
+        for msg in st.session_state.messages:
+            with st.chat_message (
+                msg["role"],
+                avatar = msg.get("avatar", "🤖" if msg["role"] == "assistant" else "🧑")
+            ):
+                st.markdown(msg["content"])
+        
+        # Entrada do Usuário
+        if prompt := st.chat_input("Digite sua pergunta sobre os indicadores..."):
+            # Adiciona Pergunta do Usuário
+            st.session_state.messages.append({"role": "user", "content": prompt, "avatar": "🧑"})
+            with st.chat_message("user", avatar="🧑"):
+                st.markdown(prompt)
+            
+            # Busca contexto semântico
+            contexts = semantic_search(prompt, index, meta, top_k=3)
+            ctx_txt = "\n".join(f"Q: {c['q']}\nA: {c['a']}" for c in contexts)
+
+            # Carrega os Dados Brutos
             dre_raw = load_csv_from_dropbox(
                 f"DRE_{date_str}_{company_for_metrics}.csv",
-                ["nome_empresa","descrição","valor"]
+                ["nome_empresa", "descrição", "saldo_atual"]
             )
             bal_raw = load_csv_from_dropbox(
                 f"BALANCO_{date_str}_{company_for_metrics}.csv",
-                ["nome_empresa","descrição","saldo_atual"]
+                ["nome_empresa", "descrição", "saldo_atual"]
             )
             if dre_raw is None or bal_raw is None:
                 st.error("Não foi possível carregar os dados brutos.")
                 st.stop()
 
-            # 3) Converte para texto CSV
+            # Converte para texto CSV
             dre_csv = dre_raw.to_csv(index=False)
             bal_csv = bal_raw.to_csv(index=False)
 
             # 4) Monta prompt usando os dados brutos
-            prompt = f"""
+            full_prompt = f"""
 Você é um assistente contábil.
 
 Aqui estão os dados brutos da Demonstração de Resultados (DRE):
@@ -529,25 +589,43 @@ E aqui os dados brutos do Balanço Patrimonial:
 Contextos anteriores (semânticos):
 {ctx_txt}
 
-Pergunta: {pergunta}
+Pergunta: {prompt}
 
 Responda de forma objetiva e fundamentada **nos dados brutos acima**.
 """
+            
+            # Efeito de Digitação
+            with st.chat_message("assistant", avatar="🤖"):
+                typing_placeholder = st.empty()
+                typing_placeholder.markdown("Digitando. . ._")
+                time.sleep(0.8)
+                resposta = client.chat.completions.create(
+                    model="gpt-3.5-turbo",
+                    messages=[
+                        {"role": "system", "content": "Assistente contábil de indicadores."},
+                        {"role": "user", "content": full_prompt}
+                    ],
+                    temperature=0
+                ).choices[0].message.content.strip()
 
-            # 5) Chama a API OpenAI
-            response = client.chat.completions.create(
-                model="gpt-3.5-turbo",
-                messages=[
-                    {"role":"system","content":"Assistente contábil de indicadores."},
-                    {"role":"user","content":prompt}
-                ],
-                temperature=0
-            ).choices[0].message.content.strip()
+                typing_placeholder.empty()
+                displayed_text = ""
+                for char in resposta:
+                    displayed_text += char
+                    typing_placeholder.markdown(displayed_text)
+                    time.sleep(0.005)
+            
+            # Salva no Histórico
+            st.session_state.messages.append({"role": "assistant", "content": resposta, "avatar": "🤖"})
 
-            st.markdown(response)
+            # Sugestão de Próxima Pergunta
+            follow_up = "Quer que eu analise também a evolução desses indicadores em relação ao período anterior?"
+            st.session_state.messages.append({"role": "assistant", "content": follow_up, "avatar": "🤖"})
+            with st.chat_message("assistant", avatar="🤖"):
+                st.markdown(follow_up)
 
-            # 6) Armazena embedding
-            upsert_embedding(pergunta, response, index, meta)
+            # Armazena embedding
+            upsert_embedding(prompt, resposta, index, meta)
 
 elif st.session_state.get("authentication_status") is False:
     st.error("Usuário ou senha incorretos")
