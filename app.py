@@ -52,9 +52,8 @@ authenticator = stauth.Authenticate(
     cfg["expiry_days"],
 )
 
-# ======== ALTERAÇÃO AQUI ========
-# Captura retorno do login
-name, authentication_status, username = authenticator.login(
+# Renderiza o formulário de login
+authenticator.login(
     location="main",
     fields={
         "Form name": "Acesso ao Sistema",
@@ -64,18 +63,18 @@ name, authentication_status, username = authenticator.login(
     }
 )
 
-# Se login for bem-sucedido, marca estado e recarrega
-if authentication_status and not st.session_state.get("logged_in", False):
-    st.session_state.logged_in = True
-    st.experimental_rerun()
+# Recupera valores do estado da sessão
+name = st.session_state.get("name")
+authentication_status = st.session_state.get("authentication_status")
+username = st.session_state.get("username")
 
-# Se login falhar
+# Lógica de autenticação
+if authentication_status:
+    st.success(f"Bem-vindo, {name}!")
 elif authentication_status is False:
     st.error("Usuário ou senha incorretos")
-
-elif authentication_status is None:
+else:
     st.warning("Por favor, insira suas credenciais")
-# ======== FIM DA ALTERAÇÃO ========
 
 
 # -----------------------------------------------------------------------------  
