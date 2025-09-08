@@ -402,43 +402,62 @@ def load_and_clean(company_id: str, date_str: str) -> tuple[pd.DataFrame, pd.Dat
 # -----------------------------------------------------------------------------
 # 3. Cálculo de Indicadores
 # -----------------------------------------------------------------------------
-def compute_indicators(dre: pd.DataFrame, bal: pd.DataFrame) -> pd.DataFrame:
-    dre_sum       = dre.groupby("account_std")["amount"].sum()
-    receita_liq   = dre_sum.get("net_revenue", 0)
-    custo_vendas  = dre_sum.get("cogs", 0)
-    lucro_bruto   = dre_sum.get("gross_profit", receita_liq - custo_vendas)
-    despesas_op   = dre_sum.get("operating_expenses", 0)
-    ebitda        = lucro_bruto - despesas_op
-    lucro_liq     = dre_sum.get("net_income", 0)
+def compute_indicators(dre_df, bal_df):
+    """
+    Calcula indicadores financeiros a partir da DRE e do Balanço,
+    corrigindo sinais e evitando divisões por zero.
+    """
 
-    bal_sum        = bal.groupby("account_std")["amount"].sum()
-    ativo_circ     = bal_sum.get("current_assets", 0)
-    estoque        = bal_sum.get("inventory", 0)
-    pass_circ      = bal_sum.get("current_liabilities", 0)
-    non_current    = bal_sum.get("non_current_assets", 0)
-    total_ativo    = bal_sum.get("total_assets", ativo_circ + non_current)
-    non_current_li = bal_sum.get("non_current_liabilities", 0)
-    pat_liq        = bal_sum.get("equity", 0)
-    total_pass     = pass_circ + non_current_li
+    # Normaliza nomes para evitar problemas de maiúsculas/minúsculas
+    dre_df.columns = dre_df.columns.str.lower()
+    bal_df.columns = bal_df.columns.str.lower()
 
-    liquidez_corrente = ativo_circ / pass_circ if pass_circ else None
-    liquidez_seca     = (ativo_circ - estoque) / pass_circ if pass_circ else None
-    endividamento     = total_pass / total_ativo if total_ativo else None
-    roa               = lucro_liq / total_ativo if total_ativo else None
-    roe               = lucro_liq / pat_liq if pat_liq else None
+    # Converte valores para numérico
+    dre_df["valor"] = pd.to_numeric(dre_df["valor"], errors="coerce").fillna(0)
+    bal_df["saldo_atual"] = pd.to_numeric(bal_df["saldo_atual"], errors="coerce").fillna(0)
 
-    return pd.DataFrame({
-        "Indicador": [
-            "Lucro Bruto", "EBITDA", "Lucro Líquido",
-            "Liquidez Corrente", "Liquidez Seca", "Endividamento",
-            "ROA", "ROE"
-        ],
-        "Valor": [
-            lucro_bruto, ebitda, lucro_liq,
-            liquidez_corrente, liquidez_seca, endividamento,
-            roa, roe
-        ]
-    })
+    # Mapeamento de contas relevantes na DRE
+    def get_val(desc):
+        match = dre_df[dre_df["descrição"].str.contains(desc, case=False, na=False)]
+        return match["valor"].sum() if not match.empty else 0
+
+    lucro_bruto = get_val("lucro bruto")
+    despesas_operacionais = abs(get_val("despesas operacionais"))  # sempre positivo
+    ebitda = lucro_bruto - despesas_operacionais
+
+    # Lucro líquido: trata "prejuízo" como negativo
+    lucro_liquido = get_val("lucro líquido")
+    prejuizo = get_val("prejuízo do exercício")
+    if prejuizo != 0 and lucro_liquido == 0:
+        lucro_liquido = -abs(prejuizo)
+
+    # Mapeamento de contas relevantes no Balanço
+    def get_bal(desc):
+        match = bal_df[bal_df["descrição"].str.contains(desc, case=False, na=False)]
+        return match["saldo_atual"].sum() if not match.empty else 0
+
+    ativo_circulante = get_bal("ativo circulante")
+    passivo_circulante = get_bal("passivo circulante")
+    total_passivo = get_bal("passivo circulante") + get_bal("passivo não circulante")
+    total_ativo = get_bal("ativo circulante") + get_bal("ativo não circulante")
+    patrimonio_liquido = get_bal("patrimônio líquido")
+
+    # Indicadores com proteção contra divisão por zero
+    liquidez_corrente = ativo_circulante / passivo_circulante if passivo_circulante else 0
+    endividamento = total_passivo / total_ativo if total_ativo else 0
+    roe = lucro_liquido / patrimonio_liquido if patrimonio_liquido else 0
+
+    # Monta DataFrame de indicadores
+    indicadores = pd.DataFrame([
+        {"Indicador": "Lucro Bruto", "Valor": lucro_bruto},
+        {"Indicador": "EBITDA", "Valor": ebitda},
+        {"Indicador": "Lucro Líquido", "Valor": lucro_liquido},
+        {"Indicador": "Liquidez Corrente", "Valor": liquidez_corrente},
+        {"Indicador": "Endividamento", "Valor": endividamento},
+        {"Indicador": "ROE", "Valor": roe}
+    ])
+
+    return indicadores
 
 # -----------------------------------------------------------------------------
 # 4. UI & Navigation
