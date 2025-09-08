@@ -371,7 +371,7 @@ def load_and_clean(company_id: str, date_str: str) -> tuple[pd.DataFrame, pd.Dat
     )
     return dre, bal
 
-# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------  
 # 3. Cálculo de Indicadores
 # -----------------------------------------------------------------------------
 def compute_indicators(dre: pd.DataFrame, bal: pd.DataFrame) -> pd.DataFrame:
@@ -411,6 +411,31 @@ def compute_indicators(dre: pd.DataFrame, bal: pd.DataFrame) -> pd.DataFrame:
             roa, roe
         ]
     })
+
+# -----------------------------------------------------------------------------  
+# 3.1 Geração de perguntas de acompanhamento (respostas encadeadas)
+# -----------------------------------------------------------------------------
+def generate_followups(user_prompt: str, assistant_answer: str, company: str, date_str: str) -> list[str]:
+    """Gera 2 perguntas curtas e úteis para continuar a conversa."""
+    try:
+        follow = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role":"system","content":"Gere 2 perguntas curtas, objetivas, úteis, sobre finanças/contabilidade com base no diálogo. Responda apenas com uma lista separada por linhas, sem prefixos."},
+                {"role":"user","content":f"Empresa: {company} | Data: {date_str}\nPergunta do usuário: {user_prompt}\nResposta da IA: {assistant_answer}"}
+            ],
+            temperature=0.3,
+            max_tokens=120
+        ).choices[0].message.content.strip()
+        # Quebra por linhas, remove vazios e limita a 2
+        suggestions = [s.strip(" -•\t") for s in follow.splitlines() if s.strip()]
+        return suggestions[:2] if suggestions else []
+    except Exception:
+        # fallback
+        return [
+            "Quer ver a evolução desses indicadores versus o período anterior?",
+            "Deseja que eu detalhe a composição das despesas operacionais?"
+        ]
 
 # -----------------------------------------------------------------------------  
 # 4. UI & Navigation  
@@ -493,42 +518,46 @@ if st.session_state.get("authentication_status"):
             st.altair_chart(chart, use_container_width=True)
 
     else:  # Chatbot
+        # Estilos: histórico rolável + balões
         st.markdown(
             """
             <style>
-            /* Fundo geral */
             .stApp {
-            background-color: #2c2c2c;
-            font-family: 'Segoe UI', sans-serif;
+              background-color: #2c2c2c;
+              font-family: 'Segoe UI', sans-serif;
             }
-
-            /* Balões do usuário */
+            .chat-history {
+              max-height: 60vh;
+              overflow-y: auto;
+              padding-right: 6px;
+              margin-bottom: 10px;
+            }
+            .typing-indicator {
+              font-style: italic;
+              color: #888;
+            }
             .stChatMessage.user {
-            background-color: #d1e7ff;
-            border-radius: 16px;
-            padding: 10px 14px;
-            color: #003366;
-            margin-bottom: 8px;
-            max-width: 80%
-            }
-
-            /* Balões da IA */
-            .stChatMessage.assistant {
-            background-color: #ffffff;
-            border-radius: 16px
-            padding: 10px 14px;
-            border 1px solid #e0e0e0;
-            color: #222;
-            margin-bottom: 8px;
-            max-width: 80%;
-            }
-
-            /* Alternância de lado */
-            .stChatMessage.user {
-            margin-left: auto;
+              background-color: #d1e7ff;
+              border-radius: 16px;
+              padding: 10px 14px;
+              color: #003366;
+              margin-bottom: 8px;
+              max-width: 80%
             }
             .stChatMessage.assistant {
-            margin-right: auto;
+              background-color: #ffffff;
+              border-radius: 16px;
+              padding: 10px 14px;
+              border: 1px solid #e0e0e0;
+              color: #222;
+              margin-bottom: 8px;
+              max-width: 80%;
+            }
+            .stChatMessage.user { margin-left: auto; }
+            .stChatMessage.assistant { margin-right: auto; }
+            .suggestion-btn {
+              display: inline-block;
+              margin: 4px 6px 0 0;
             }
             </style>
             """,
@@ -536,18 +565,21 @@ if st.session_state.get("authentication_status"):
         )
         
         st.header(f"🤖 Chatbot Contábil - {company_for_metrics}")
+
         # Inicializa Histórico
         if "messages" not in st.session_state:
             st.session_state.messages = []
-        
-        # Renderiza Histórico com Avatar
+
+        # Contêiner rolável para histórico
+        st.markdown('<div class="chat-history">', unsafe_allow_html=True)
         for msg in st.session_state.messages:
-            with st.chat_message (
+            with st.chat_message(
                 msg["role"],
-                avatar = msg.get("avatar", "🤖" if msg["role"] == "assistant" else "🧑")
+                avatar=msg.get("avatar", "🤖" if msg["role"] == "assistant" else "🧑")
             ):
                 st.markdown(msg["content"])
-        
+        st.markdown('</div>', unsafe_allow_html=True)
+
         # Entrada do Usuário
         if prompt := st.chat_input("Digite sua pergunta sobre os indicadores..."):
             # Adiciona Pergunta do Usuário
@@ -576,7 +608,7 @@ if st.session_state.get("authentication_status"):
             dre_csv = dre_raw.to_csv(index=False)
             bal_csv = bal_raw.to_csv(index=False)
 
-            # 4) Monta prompt usando os dados brutos
+            # Monta prompt com os dados brutos
             full_prompt = f"""
 Você é um assistente contábil.
 
@@ -591,14 +623,19 @@ Contextos anteriores (semânticos):
 
 Pergunta: {prompt}
 
-Responda de forma objetiva e fundamentada **nos dados brutos acima**.
+Responda de forma objetiva e fundamentada nos dados brutos acima.
 """
-            
-            # Efeito de Digitação
+
+            # Efeito de digitação (indicador "sendo digitado…")
             with st.chat_message("assistant", avatar="🤖"):
                 typing_placeholder = st.empty()
-                typing_placeholder.markdown("Digitando. . ._")
-                time.sleep(0.8)
+                # animação simples "sendo digitado..."
+                for i in range(10):
+                    dots = "." * ((i % 3) + 1)
+                    typing_placeholder.markdown(f"<span class='typing-indicator'>sendo digitado{dots}</span>", unsafe_allow_html=True)
+                    time.sleep(0.15)
+
+                # Chamada para resposta principal
                 resposta = client.chat.completions.create(
                     model="gpt-3.5-turbo",
                     messages=[
@@ -608,21 +645,31 @@ Responda de forma objetiva e fundamentada **nos dados brutos acima**.
                     temperature=0
                 ).choices[0].message.content.strip()
 
+                # Mostra resposta com efeito de digitação progressiva
                 typing_placeholder.empty()
+                stream_placeholder = st.empty()
                 displayed_text = ""
-                for char in resposta:
-                    displayed_text += char
-                    typing_placeholder.markdown(displayed_text)
-                    time.sleep(0.005)
-            
+                for ch in resposta:
+                    displayed_text += ch
+                    stream_placeholder.markdown(displayed_text)
+                    time.sleep(0.003)
+
             # Salva no Histórico
             st.session_state.messages.append({"role": "assistant", "content": resposta, "avatar": "🤖"})
 
-            # Sugestão de Próxima Pergunta
-            follow_up = "Quer que eu analise também a evolução desses indicadores em relação ao período anterior?"
-            st.session_state.messages.append({"role": "assistant", "content": follow_up, "avatar": "🤖"})
-            with st.chat_message("assistant", avatar="🤖"):
-                st.markdown(follow_up)
+            # Gera perguntas de acompanhamento (respostas encadeadas)
+            suggestions = generate_followups(prompt, resposta, company_for_metrics, date_str)
+
+            if suggestions:
+                # Renderiza como botões de quick reply
+                with st.chat_message("assistant", avatar="🤖"):
+                    st.markdown("Sugestões para continuar:")
+                    cols = st.columns(min(3, len(suggestions)))
+                    for i, q in enumerate(suggestions):
+                        if cols[i % len(cols)].button(q, key=f"suggestion_{len(st.session_state.messages)}_{i}"):
+                            # Insere a pergunta selecionada e reprocessa a página
+                            st.session_state.messages.append({"role":"user","content":q,"avatar":"🧑"})
+                            st.experimental_rerun()
 
             # Armazena embedding
             upsert_embedding(prompt, resposta, index, meta)
