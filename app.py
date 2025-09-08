@@ -567,7 +567,7 @@ if st.session_state.get("authentication_status"):
             """
             <style>
             .stApp {
-              background-color: #2c2c2c;
+              background-color: #E1E3EBFF;
               font-family: 'Segoe UI', sans-serif;
             }
             .chat-history {
