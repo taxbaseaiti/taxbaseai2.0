@@ -65,7 +65,7 @@ st.markdown(
 # Abre container e card, renderiza logo e formulário de login
 st.markdown('<div class="login-container">', unsafe_allow_html=True)
 st.markdown('<div class="login-box">', unsafe_allow_html=True)
-st.image("assets/taxbaseAI_logo.png", use_column_width=False)
+st.image("assets/taxbaseAI_logo.png", use_container_width=False)
 
 USERS = {
     "alice": {"name":"Alice Souza","password":bcrypt.hashpw("senhaAlice".encode(), bcrypt.gensalt()).decode(),"empresa":"JJMAX","role":"user"},
@@ -87,8 +87,11 @@ authenticator = stauth.Authenticate(
     cfg["key"],
     cfg["expiry_days"],
 )
+# texto do prompt
+st.markdown("<h3 style='color: white; margin-bottom: 1rem;'>Faça login para continuar</h3>", unsafe_allow_html=True)
+
 # renderiza o formulário dentro do card
-authenticator.login("Faça login para continuar", "main")
+authenticator.login("main")
 
 # fecha divs do card
 st.markdown('</div></div>', unsafe_allow_html=True)
