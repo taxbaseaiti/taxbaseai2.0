@@ -310,6 +310,8 @@ ACCOUNT_MAP.update({
 
     # Benefícios em terceiros?
     "BENF. EM MOVEIS DE TERC":                    "other_operating_expenses",
+
+    "FARMACIA DE MANIP GRACIOSA":                 "related_party_receivables"
 })
 
 @st.cache_data
