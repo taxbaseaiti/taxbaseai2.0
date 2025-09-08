@@ -20,8 +20,6 @@ st.set_page_config(page_title="TaxbaseAI - Sua AI Contábil",
                    layout="wide"
                 )
 
-st.image("assets/taxbaseAI_logo.png", width=180)
-
 dbx_cfg      = st.secrets["dropbox"]
 dbx          = dropbox.Dropbox(
     app_key=dbx_cfg["app_key"],
@@ -34,8 +32,41 @@ client = OpenAI(api_key=st.secrets["openai"]["api_key"])
 
 
 # -----------------------------------------------------------------------------  
-# 0.1 Credentials & Authentication  
+# 0.1 Credentials & Authentication with custom login card  
 # -----------------------------------------------------------------------------
+
+# Injeta CSS para centralizar o card e estilizar a logo
+st.markdown(
+    """
+    <style>
+    .login-container {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+    }
+    .login-box {
+      background-color: #262730;
+      padding: 2rem;
+      border-radius: 8px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+      width: 360px;
+      text-align: center;
+    }
+    .login-box img {
+      margin-bottom: 1.5rem;
+      max-width: 200px;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
+# Abre container e card, renderiza logo e formulário de login
+st.markdown('<div class="login-container">', unsafe_allow_html=True)
+st.markdown('<div class="login-box">', unsafe_allow_html=True)
+st.image("assets/taxbaseAI_logo.png", use_column_width=False)
+
 USERS = {
     "alice": {"name":"Alice Souza","password":bcrypt.hashpw("senhaAlice".encode(), bcrypt.gensalt()).decode(),"empresa":"JJMAX","role":"user"},
     "bob":   {"name":"Bob Oliveira","password":bcrypt.hashpw("senhaBob".encode(),   bcrypt.gensalt()).decode(),"empresa":"CICLOMADE","role":"user"},
@@ -56,7 +87,15 @@ authenticator = stauth.Authenticate(
     cfg["key"],
     cfg["expiry_days"],
 )
-authenticator.login(location="main")
+# renderiza o formulário dentro do card
+authenticator.login("Faça login para continuar", "main")
+
+# fecha divs do card
+st.markdown('</div></div>', unsafe_allow_html=True)
+
+# interrompe o app até o usuário autenticar
+if st.session_state.get("authentication_status") is not True:
+    st.stop()
 
 
 # -----------------------------------------------------------------------------  
