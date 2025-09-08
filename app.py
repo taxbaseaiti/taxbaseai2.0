@@ -275,7 +275,41 @@ ACCOUNT_MAP.update({
     "ELAINE VERISSIMO":                            "related_party_liabilities",
 
     "IRRF S/ FOLHA A RECOLHER":              "tax_liabilities_irrf",
-    "ENERGIA ELÉTRICA, ÁGUA E TELEFONE A PAGA": "utilities_payable"
+    "ENERGIA ELÉTRICA, ÁGUA E TELEFONE A PAGA": "utilities_payable",
+
+    # DRE – despesas novas
+    "(-) COMISSÕES SOBRE VENDAS":    "commission_expenses",
+    "(-) SERVIÇOS TOMADOS DE PJ":    "services_from_third_parties",
+
+    # BP – contas a receber / adiantamentos
+    "ADVANCED LABS LTDA":            "related_party_receivables",
+    "FARMACIA MAJESTIC":             "related_party_receivables",
+    "OFC COMERCIO - LOG":            "related_party_receivables",
+    "CLEVERSON SANTOS LIMA":         "related_party_receivables",
+    "DROGARIA E FARM DE MANIP VILA AMERICA": "related_party_receivables",
+
+    "ADIANTAMENTO DE SALÁRIO":       "advances_to_employees",
+    "ADIANTAMENTO A EMPREGADOS":     "advances_to_employees",
+    "EMPRÉSTIMO A EMPREGADOS":       "loans_to_employees",
+    "EMPRÉSTIMOS A FUNCIONÁRIOS":    "loans_to_employees",
+
+    "ADIANTAMENTO DE CLIENTES - MERCADO OFICIAL": "advances_from_customers",
+
+    # Tributos
+    "IRRF S/ APLICAÇÃO FINANCEIRA A RECUPERAR":   "taxes_recoverable_financial",
+    "ISS A RECOLHER":                             "tax_liabilities_iss",
+    "SUBSTITUIÇÃO TRIBUTÁRIA A RECOLHER":         "tax_liabilities_icms_substitution",
+    "ICMS ANTECIPADO A RECOLHER":                 "tax_liabilities_icms",
+
+    # Imobilizado / outros ativos
+    "INSTALAÇÕES":                                "fixed_assets_other",
+    "ATIVO PERMANENTE":                           "non_current_assets",
+
+    # Sócios / contas correntes
+    "CONTA CORRENTE DE SOCIOS":                   "shareholder_current_accounts",
+
+    # Benefícios em terceiros?
+    "BENF. EM MOVEIS DE TERC":                    "other_operating_expenses",
 })
 
 @st.cache_data
