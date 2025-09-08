@@ -14,12 +14,15 @@ import pickle
 # -----------------------------------------------------------------------------  
 # 0. Settings & Secrets  
 # -----------------------------------------------------------------------------
-st.set_page_config(page_title="MVP IA Contábil Avançado", layout="wide")
+st.set_page_config(page_title="TaxbaseAI - Sua AI Contábil", layout="wide")
 
 dbx_cfg      = st.secrets["dropbox"]
-ACCESS_TOKEN = dbx_cfg["access_token"]
+dbx          = dropbox.Dropbox(
+    app_key=dbx_cfg["app_key"],
+    app_secret=dbx_cfg["app_secret"],
+    oauth2_refresh_token=dbx_cfg["refresh_token"]
+)
 BASE_PATH    = dbx_cfg["base_path"].rstrip("/")
-dbx = dropbox.Dropbox(ACCESS_TOKEN)
 
 openai.api_key = st.secrets["openai"]["api_key"]
 
