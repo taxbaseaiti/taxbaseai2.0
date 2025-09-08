@@ -562,7 +562,7 @@ if st.session_state.get("authentication_status"):
             # Carrega os Dados Brutos
             dre_raw = load_csv_from_dropbox(
                 f"DRE_{date_str}_{company_for_metrics}.csv",
-                ["nome_empresa", "descrição", "saldo_atual"]
+                ["nome_empresa", "descrição", "valor"]
             )
             bal_raw = load_csv_from_dropbox(
                 f"BALANCO_{date_str}_{company_for_metrics}.csv",
