@@ -51,7 +51,23 @@ authenticator = stauth.Authenticate(
     cfg["key"],
     cfg["expiry_days"],
 )
-authenticator.login(location="main")
+
+# ======== ALTERAÇÃO AQUI ========
+# Captura retorno do login
+name, authentication_status, username = authenticator.login(location="main")
+
+# Se login for bem-sucedido, marca estado e recarrega
+if authentication_status and not st.session_state.get("logged_in", False):
+    st.session_state.logged_in = True
+    st.experimental_rerun()
+
+# Se login falhar
+elif authentication_status is False:
+    st.error("Usuário ou senha incorretos")
+
+elif authentication_status is None:
+    st.warning("Por favor, insira suas credenciais")
+# ======== FIM DA ALTERAÇÃO ========
 
 
 # -----------------------------------------------------------------------------  
@@ -415,7 +431,7 @@ def compute_indicators(dre: pd.DataFrame, bal: pd.DataFrame) -> pd.DataFrame:
 # -----------------------------------------------------------------------------  
 # 4. UI & Navigation  
 # -----------------------------------------------------------------------------
-if st.session_state.get("authentication_status"):
+if st.session_state.get("logged_in"):
     username = st.session_state["username"]
     user_info = USERS[username]
     role      = user_info["role"]
