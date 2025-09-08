@@ -16,7 +16,7 @@ import time
 # 0. Settings & Secrets  
 # -----------------------------------------------------------------------------
 st.set_page_config(page_title="TaxbaseAI - Sua AI Contábil",
-                   page_icon="assets/taxbaseAI_logo.png",
+                   page_icon="assets/favIcon.png",
                    layout="wide"
                 )
 
