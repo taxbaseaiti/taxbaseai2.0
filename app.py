@@ -10,7 +10,6 @@ import altair as alt
 import plotly.express as px
 import faiss
 import pickle
-import time
 
 # -----------------------------------------------------------------------------  
 # 0. Settings & Secrets  
@@ -51,36 +50,8 @@ authenticator = stauth.Authenticate(
     cfg["key"],
     cfg["expiry_days"],
 )
+authenticator.login(location="main")
 
-# ======== LOGIN ========
-if not st.session_state.get("logged_in"):
-    authenticator.login(
-        location="main",
-        fields={
-            "Form name": "Acesso ao Sistema",
-            "Username": "Usuário",
-            "Password": "Senha",
-            "Login": "Entrar"
-        }
-    )
-
-    name = st.session_state.get("name")
-    authentication_status = st.session_state.get("authentication_status")
-    username = st.session_state.get("username")
-
-    if authentication_status:
-        st.session_state["logged_in"] = True
-        st.session_state["username"] = username
-        # Define página inicial após login
-        st.session_state["page"] = "Visão Geral"
-        st.success(f"Bem-vindo, {name}!")
-        st.experimental_rerun()
-
-    elif authentication_status is False:
-        st.error("Usuário ou senha incorretos")
-
-    else:
-        st.warning("Por favor, insira suas credenciais")
 
 # -----------------------------------------------------------------------------  
 # 1. FAISS Embeddings  
@@ -402,179 +373,151 @@ def load_and_clean(company_id: str, date_str: str) -> tuple[pd.DataFrame, pd.Dat
 # -----------------------------------------------------------------------------
 # 3. Cálculo de Indicadores
 # -----------------------------------------------------------------------------
-def compute_indicators(dre_df, bal_df):
-    """
-    Calcula indicadores financeiros a partir da DRE e do Balanço,
-    corrigindo sinais e evitando divisões por zero.
-    """
+def compute_indicators(dre: pd.DataFrame, bal: pd.DataFrame) -> pd.DataFrame:
+    dre_sum       = dre.groupby("account_std")["amount"].sum()
+    receita_liq   = dre_sum.get("net_revenue", 0)
+    custo_vendas  = dre_sum.get("cogs", 0)
+    lucro_bruto   = dre_sum.get("gross_profit", receita_liq - custo_vendas)
+    despesas_op   = dre_sum.get("operating_expenses", 0)
+    ebitda        = lucro_bruto - despesas_op
+    lucro_liq     = dre_sum.get("net_income", 0)
 
-    # Garante que a coluna amount é numérica
-    dre_df["amount"] = pd.to_numeric(dre_df["amount"], errors="coerce").fillna(0)
-    bal_df["amount"] = pd.to_numeric(bal_df["amount"], errors="coerce").fillna(0)
+    bal_sum        = bal.groupby("account_std")["amount"].sum()
+    ativo_circ     = bal_sum.get("current_assets", 0)
+    estoque        = bal_sum.get("inventory", 0)
+    pass_circ      = bal_sum.get("current_liabilities", 0)
+    non_current    = bal_sum.get("non_current_assets", 0)
+    total_ativo    = bal_sum.get("total_assets", ativo_circ + non_current)
+    non_current_li = bal_sum.get("non_current_liabilities", 0)
+    pat_liq        = bal_sum.get("equity", 0)
+    total_pass     = pass_circ + non_current_li
 
-    # Soma por conta padronizada
-    dre_sum = dre_df.groupby("account_std")["amount"].sum()
-    bal_sum = bal_df.groupby("account_std")["amount"].sum()
+    liquidez_corrente = ativo_circ / pass_circ if pass_circ else None
+    liquidez_seca     = (ativo_circ - estoque) / pass_circ if pass_circ else None
+    endividamento     = total_pass / total_ativo if total_ativo else None
+    roa               = lucro_liq / total_ativo if total_ativo else None
+    roe               = lucro_liq / pat_liq if pat_liq else None
 
-    # Lucro Bruto
-    lucro_bruto = dre_sum.get("gross_profit", 0)
+    return pd.DataFrame({
+        "Indicador": [
+            "Lucro Bruto", "EBITDA", "Lucro Líquido",
+            "Liquidez Corrente", "Liquidez Seca", "Endividamento",
+            "ROA", "ROE"
+        ],
+        "Valor": [
+            lucro_bruto, ebitda, lucro_liq,
+            liquidez_corrente, liquidez_seca, endividamento,
+            roa, roe
+        ]
+    })
 
-    # Despesas operacionais sempre positivas
-    despesas_operacionais = abs(dre_sum.get("operating_expenses", 0))
-    ebitda = lucro_bruto - despesas_operacionais
-
-    # Lucro líquido: trata prejuízo como negativo
-    lucro_liquido = dre_sum.get("net_income", 0)
-    if "net_income" not in dre_sum and "prejuizo_do_exercicio" in dre_sum:
-        lucro_liquido = -abs(dre_sum.get("prejuizo_do_exercicio", 0))
-
-    # Balanço
-    ativo_circ = bal_sum.get("current_assets", 0)
-    passivo_circ = bal_sum.get("current_liabilities", 0)
-    total_passivo = passivo_circ + bal_sum.get("non_current_liabilities", 0)
-    total_ativo = bal_sum.get("total_assets", ativo_circ + bal_sum.get("non_current_assets", 0))
-    patrimonio_liquido = bal_sum.get("equity", 0)
-
-    # Indicadores
-    liquidez_corrente = ativo_circ / passivo_circ if passivo_circ else None
-    endividamento = total_passivo / total_ativo if total_ativo else None
-    roe = lucro_liquido / patrimonio_liquido if patrimonio_liquido else None
-
-    return pd.DataFrame([
-        {"Indicador": "Lucro Bruto", "Valor": lucro_bruto},
-        {"Indicador": "EBITDA", "Valor": ebitda},
-        {"Indicador": "Lucro Líquido", "Valor": lucro_liquido},
-        {"Indicador": "Liquidez Corrente", "Valor": liquidez_corrente},
-        {"Indicador": "Endividamento", "Valor": endividamento},
-        {"Indicador": "ROE", "Valor": roe}
-    ])
-
+# -----------------------------------------------------------------------------  
+# 4. UI & Navigation  
 # -----------------------------------------------------------------------------
-# 4. UI & Navigation
-# -----------------------------------------------------------------------------
-if st.session_state.get("logged_in") and st.session_state.get("username"):
-    username = st.session_state.get("username")
+if st.session_state.get("authentication_status"):
+    username = st.session_state["username"]
+    user_info = USERS[username]
+    role      = user_info["role"]
+    empresa   = user_info["empresa"]
 
-    if username in USERS:
-        user_info = USERS[username]
-        role      = user_info["role"]
-        empresa   = user_info["empresa"]
+    authenticator.logout("Sair", "sidebar")
+    st.sidebar.success(f"Conectado como {user_info['name']} ({role})")
 
-        authenticator.logout("Sair", "sidebar")
-        st.sidebar.success(f"Conectado como {user_info['name']} ({role})")
+    available_companies = ["CICLOMADE", "JJMAX", "SAUDEFORMA"]
+    if role == "admin":
+        session_companies = st.sidebar.multiselect(
+            "Selecione empresas", available_companies, default=available_companies
+        )
+    else:
+        session_companies = [empresa]
 
-        available_companies = ["CICLOMADE", "JJMAX", "SAUDEFORMA"]
-        if role == "admin":
-            session_companies = st.sidebar.multiselect(
-                "Selecione empresas", available_companies, default=available_companies
-            )
+    # Filtrar apenas empresas válidas
+    session_companies = [c for c in session_companies if c in available_companies]
+    if not session_companies:
+        st.sidebar.error("Selecione ao menos uma empresa válida.")
+
+    session_date = st.sidebar.date_input("Data de Referência", value=pd.to_datetime("2024-12-31"))
+    date_str = session_date.strftime("%Y-%m-%d")
+
+    company_for_metrics = st.sidebar.selectbox("Empresa para Métricas", session_companies)
+
+    # Carregar dados com tratamento de erros
+    all_dre, all_bal = [], []
+    for comp in session_companies:
+        dre, bal = load_and_clean(comp, date_str)
+        if dre is None or bal is None:
+            st.warning(f"Pulando {comp}: dados não encontrados.")
+            continue
+        all_dre.append(dre)
+        all_bal.append(bal)
+
+    if all_dre and all_bal:
+        df_all = pd.concat(all_dre + all_bal, ignore_index=True)
+    else:
+        df_all = pd.DataFrame()  # vazio
+
+    page = st.sidebar.radio("📊 Navegação", ["Visão Geral", "Dashboards", "Chatbot"])
+
+    if page == "Visão Geral":
+        dre_sel, bal_sel = load_and_clean(company_for_metrics, date_str)
+        if dre_sel is None or bal_sel is None:
+            st.error("Não há dados para Visão Geral.")
         else:
-            session_companies = [empresa]
+            rpt = compute_indicators(dre_sel, bal_sel)
+            st.header(f"🏁 Indicadores {company_for_metrics} em {date_str}")
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Lucro Bruto",  f"R$ {rpt.loc[0,'Valor']:,.2f}")
+            c2.metric("EBITDA",        f"R$ {rpt.loc[1,'Valor']:,.2f}")
+            c3.metric("Lucro Líquido", f"R$ {rpt.loc[2,'Valor']:,.2f}")
+            c4, c5, c6 = st.columns(3)
+            c4.metric("Liquidez Corrente", f"{rpt.loc[3,'Valor']:.2f}")
+            c5.metric("Endividamento",     f"{rpt.loc[5,'Valor']:.2%}")
+            c6.metric("ROE",               f"{rpt.loc[7,'Valor']:.2%}")
 
-        # Filtrar apenas empresas válidas
-        session_companies = [c for c in session_companies if c in available_companies]
-        if not session_companies:
-            st.sidebar.error("Selecione ao menos uma empresa válida.")
+            st.markdown("---")
+            st.dataframe(rpt.style.format({"Valor":"R$ {:,.2f}"}), use_container_width=True)
 
-        session_date = st.sidebar.date_input("Data de Referência", value=pd.to_datetime("2024-12-31"))
-        date_str = session_date.strftime("%Y-%m-%d")
-
-        company_for_metrics = st.sidebar.selectbox("Empresa para Métricas", session_companies)
-
-        # Carregar dados com tratamento de erros
-        all_dre, all_bal = [], []
-        for comp in session_companies:
-            dre, bal = load_and_clean(comp, date_str)
-            if dre is None or bal is None:
-                st.warning(f"Pulando {comp}: dados não encontrados.")
-                continue
-            all_dre.append(dre)
-            all_bal.append(bal)
-
-        if all_dre and all_bal:
-            df_all = pd.concat(all_dre + all_bal, ignore_index=True)
+    elif page == "Dashboards":
+        if df_all.empty:
+            st.info("Nenhum dado disponível para as seleções atuais.")
         else:
-            df_all = pd.DataFrame()  # vazio
-
-        page = st.sidebar.radio("📊 Navegação", ["Visão Geral", "Dashboards", "Chatbot"])
-
-        if page == "Visão Geral":
-            dre_sel, bal_sel = load_and_clean(company_for_metrics, date_str)
-            if dre_sel is None or bal_sel is None:
-                st.error("Não há dados para Visão Geral.")
-            else:
-                rpt = compute_indicators(dre_sel, bal_sel)
-                st.header(f"🏁 Indicadores {company_for_metrics} em {date_str}")
-                c1, c2, c3 = st.columns(3)
-                c1.metric("Lucro Bruto",  f"R$ {rpt.loc[0,'Valor']:,.2f}")
-                c2.metric("EBITDA",        f"R$ {rpt.loc[1,'Valor']:,.2f}")
-                c3.metric("Lucro Líquido", f"R$ {rpt.loc[2,'Valor']:,.2f}")
-                c4, c5, c6 = st.columns(3)
-                c4.metric("Liquidez Corrente", f"{rpt.loc[3,'Valor']:.2f}")
-                c5.metric("Endividamento",     f"{rpt.loc[5,'Valor']:.2%}")
-                c6.metric("ROE",               f"{rpt.loc[7,'Valor']:.2%}")
-
-                st.markdown("---")
-                st.dataframe(rpt.style.format({"Valor":"R$ {:,.2f}"}), use_container_width=True)
-
-        elif page == "Dashboards":
-            if df_all.empty:
-                st.info("Nenhum dado disponível para as seleções atuais.")
-            else:
-                st.header("📈 Dashboards")
-                chart = alt.Chart(df_all).mark_bar().encode(
-                    x="account_std:N",
-                    y="amount:Q",
-                    color="company_id:N",
-                    tooltip=["company_id","account_std","amount"]
-                )
-                st.altair_chart(chart, use_container_width=True)
-
-        else:  # Chatbot
-            st.markdown(
-                """
-                <style>
-                .stApp { background-color: #191919; font-family: 'Segoe UI', sans-serif; }
-                .stChatMessage.user { background-color: #d1e7ff; border-radius: 12px; padding: 10px; color: #003366; }
-                .stChatMessage.assistant { background-color: #ffffff; border-radius: 12px; padding: 10px; border: 1px solid #e0e0e0; color: #222; }
-                </style>
-                """,
-                unsafe_allow_html=True
+            st.header("📈 Dashboards")
+            # Exemplo de gráfico Altair
+            chart = alt.Chart(df_all).mark_bar().encode(
+                x="account_std:N",
+                y="amount:Q",
+                color="company_id:N",
+                tooltip=["company_id","account_std","amount"]
             )
+            st.altair_chart(chart, use_container_width=True)
 
-            st.header(f"🤖 Chatbot Contábil - {company_for_metrics}")
+    else:  # Chatbot
+        st.header(f"🤖 Chatbot Contábil - {company_for_metrics}")
+        pergunta = st.text_area("Pergunta sobre os indicadores")
+        if st.button("Enviar") and pergunta:
+            # 1) Contextos semânticos
+            contexts = semantic_search(pergunta, index, meta, top_k=3)
+            ctx_txt   = "\n".join(f"Q: {c['q']}\nA: {c['a']}" for c in contexts)
 
-            if "messages" not in st.session_state:
-                st.session_state.messages = []
+            # 2) Carrega dados brutos direto do CSV no Dropbox
+            dre_raw = load_csv_from_dropbox(
+                f"DRE_{date_str}_{company_for_metrics}.csv",
+                ["nome_empresa","descrição","valor"]
+            )
+            bal_raw = load_csv_from_dropbox(
+                f"BALANCO_{date_str}_{company_for_metrics}.csv",
+                ["nome_empresa","descrição","saldo_atual"]
+            )
+            if dre_raw is None or bal_raw is None:
+                st.error("Não foi possível carregar os dados brutos.")
+                st.stop()
 
-            for msg in st.session_state.messages:
-                with st.chat_message(msg["role"], avatar=msg.get("avatar", None)):
-                    st.markdown(msg["content"])
+            # 3) Converte para texto CSV
+            dre_csv = dre_raw.to_csv(index=False)
+            bal_csv = bal_raw.to_csv(index=False)
 
-            if prompt := st.chat_input("Digite sua pergunta sobre os indicadores..."):
-                st.session_state.messages.append({"role": "user", "content": prompt, "avatar": "🧑"})
-                with st.chat_message("user", avatar="🧑"):
-                    st.markdown(prompt)
-
-                contexts = semantic_search(prompt, index, meta, top_k=3)
-                ctx_txt = "\n".join(f"Q: {c['q']}\nA: {c['a']}" for c in contexts)
-
-                dre_raw = load_csv_from_dropbox(
-                    f"DRE_{date_str}_{company_for_metrics}.csv",
-                    ["nome_empresa", "descrição", "valor"]
-                )
-                bal_raw = load_csv_from_dropbox(
-                    f"BALANCO_{date_str}_{company_for_metrics}.csv",
-                    ["nome_empresa", "descrição", "saldo_atual"]
-                )
-                if dre_raw is None or bal_raw is None:
-                    st.error("Não foi possível carregar os dados brutos.")
-                    st.stop()
-
-                dre_csv = dre_raw.to_csv(index=False)
-                bal_csv = bal_raw.to_csv(index=False)
-
-                full_prompt = f"""
+            # 4) Monta prompt usando os dados brutos
+            prompt = f"""
 Você é um assistente contábil.
 
 Aqui estão os dados brutos da Demonstração de Resultados (DRE):
@@ -586,38 +529,27 @@ E aqui os dados brutos do Balanço Patrimonial:
 Contextos anteriores (semânticos):
 {ctx_txt}
 
-Pergunta: {prompt}
+Pergunta: {pergunta}
 
 Responda de forma objetiva e fundamentada **nos dados brutos acima**.
 """
 
-                with st.chat_message("assistant", avatar="🤖"):
-                    typing_placeholder = st.empty()
-                    typing_placeholder.markdown("_Digitando..._")
-                    time.sleep(0.8)
-                    resposta = client.chat.completions.create(
-                        model="gpt-3.5-turbo",
-                        messages=[
-                            {"role": "system", "content": "Assistente contábil de indicadores."},
-                            {"role": "user", "content": full_prompt}
-                        ],
-                        temperature=0
-                    ).choices[0].message.content.strip()
+            # 5) Chama a API OpenAI
+            response = client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=[
+                    {"role":"system","content":"Assistente contábil de indicadores."},
+                    {"role":"user","content":prompt}
+                ],
+                temperature=0
+            ).choices[0].message.content.strip()
 
-                    typing_placeholder.empty()
-                    displayed_text = ""
-                    for char in resposta:
-                        displayed_text += char
-                        typing_placeholder.markdown(displayed_text)
-                        time.sleep(0.005)
+            st.markdown(response)
 
-                st.session_state.messages.append({"role": "assistant", "content": resposta, "avatar": "🤖"})
+            # 6) Armazena embedding
+            upsert_embedding(pergunta, response, index, meta)
 
-                follow_up = f"Quer que eu analise também a evolução desses indicadores em relação ao período anterior?"
-                st.session_state.messages.append({"role": "assistant", "content": follow_up, "avatar": "🤖"})
-                with st.chat_message("assistant", avatar="🤖"):
-                    st.markdown(follow_up)
-
-                upsert_embedding(prompt, resposta, index, meta)
+elif st.session_state.get("authentication_status") is False:
+    st.error("Usuário ou senha incorretos")
 else:
-    st.write("Você não está logado.")
+    st.info("Por favor, faça login para continuar")
