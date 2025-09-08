@@ -387,7 +387,7 @@ if st.session_state.get("authentication_status"):
     authenticator.logout("Sair", "sidebar")
     st.sidebar.success(f"Conectado como {user_info['name']} ({role})")
 
-    available_companies = ["CICLOMADE", "JJMAX"]
+    available_companies = ["CICLOMADE", "JJMAX", "SAUDEFORMA"]
     if role == "admin":
         session_companies = st.sidebar.multiselect(
             "Selecione empresas", available_companies, default=available_companies
