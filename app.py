@@ -5,7 +5,7 @@ import pandas as pd
 import numpy as np
 from io import BytesIO
 import dropbox
-import openai
+from openai import OpenAI
 import altair as alt
 import plotly.express as px
 import faiss
@@ -24,7 +24,7 @@ dbx          = dropbox.Dropbox(
 )
 BASE_PATH    = dbx_cfg["base_path"].rstrip("/")
 
-openai.api_key = st.secrets["openai"]["api_key"]
+client = OpenAI(api_key=st.secrets["openai"]["api_key"])
 
 
 # -----------------------------------------------------------------------------  
@@ -74,14 +74,14 @@ def persist_index(index, meta):
     pickle.dump(meta, open(META_PATH, "wb"))
 
 def semantic_search(query: str, index, meta, top_k=5):
-    q_emb = openai.Embedding.create(input=[query], model="text-embedding-ada-002")["data"][0]["embedding"]
+    q_emb = client.embeddings.create(model="text-embedding-ada-002", input=[query]).data[0].embedding
     D, I  = index.search(np.array([q_emb], dtype="float32"), top_k)
     return [meta[i] for i in I[0] if 0 <= i < len(meta)]
 
 def upsert_embedding(question: str, answer: str, index, meta):
-    emb = openai.Embedding.create(
-        input=[question+" ||| "+answer], model="text-embedding-ada-002"
-    )["data"][0]["embedding"]
+    emb = client.embeddings.create(
+        model="text-embedding-ada-002", input=[question+" ||| "+answer]
+    ).data[0].embedding
     index.add(np.array([emb], dtype="float32"))
     meta.append({"q": question, "a": answer})
     persist_index(index, meta)
@@ -535,7 +535,7 @@ Responda de forma objetiva e fundamentada **nos dados brutos acima**.
 """
 
             # 5) Chama a API OpenAI
-            response = openai.ChatCompletion.create(
+            response = client.chat.completions.create(
                 model="gpt-3.5-turbo",
                 messages=[
                     {"role":"system","content":"Assistente contábil de indicadores."},
