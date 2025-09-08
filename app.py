@@ -32,48 +32,8 @@ client = OpenAI(api_key=st.secrets["openai"]["api_key"])
 
 
 # -----------------------------------------------------------------------------  
-# 0.1 Credentials & Authentication with custom login card  
+# 0.1 Credentials & Authentication  
 # -----------------------------------------------------------------------------
-
-# injeta o CSS do card
-st.markdown(
-    """
-    <style>
-    .login-container {
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      height: 100vh;
-    }
-    .login-box {
-      background-color: #262730;
-      padding: 2rem;
-      border-radius: 8px;
-      box-shadow: 0 4px 20px rgba(0,0,0,0.2);
-      width: 360px;
-      text-align: center;
-    }
-    .login-box img {
-      margin-bottom: 1.5rem;
-      max-width: 200px;
-    }
-    .login-box h3 {
-      color: #FAFAFA;
-      margin-bottom: 1.5rem;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True
-)
-
-# abre o container + box
-st.markdown('<div class="login-container">', unsafe_allow_html=True)
-st.markdown('<div class="login-box">', unsafe_allow_html=True)
-
-# logo + título
-st.image("assets/taxbaseAI_logo.png", use_container_width=False)
-st.markdown("<h3>Faça login para continuar</h3>", unsafe_allow_html=True)
-
 USERS = {
     "alice": {"name":"Alice Souza","password":bcrypt.hashpw("senhaAlice".encode(), bcrypt.gensalt()).decode(),"empresa":"JJMAX","role":"user"},
     "bob":   {"name":"Bob Oliveira","password":bcrypt.hashpw("senhaBob".encode(),   bcrypt.gensalt()).decode(),"empresa":"CICLOMADE","role":"user"},
@@ -94,17 +54,7 @@ authenticator = stauth.Authenticate(
     cfg["key"],
     cfg["expiry_days"],
 )
-
-# chama o formulário de login em modo 'unrendered', 
-# para podermos posicioná-lo dentro do nosso card
-authenticator.login(location="unrendered")
-
-# fecha divs
-st.markdown('</div></div>', unsafe_allow_html=True)
-
-# interrompe o resto do app até o usuário autenticar
-if st.session_state.get("authentication_status") is not True:
-    st.stop()
+authenticator.login(location="main")
 
 
 # -----------------------------------------------------------------------------  
