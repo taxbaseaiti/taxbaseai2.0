@@ -88,7 +88,7 @@ authenticator = stauth.Authenticate(
     cfg["expiry_days"],
 )
 # texto do prompt
-st.markdown("<h3 style='color: white; margin-bottom: 1rem;'>Faça login para continuar</h3>", unsafe_allow_html=True)
+st.markdown("<h3 style='color: black; margin-bottom: 1rem;'>Faça login para continuar</h3>", unsafe_allow_html=True)
 
 # renderiza o formulário dentro do card
 authenticator.login("main")
