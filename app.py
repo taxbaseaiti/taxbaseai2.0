@@ -485,7 +485,7 @@ if st.session_state.get("authentication_status"):
     empresa   = user_info["empresa"]
 
     with st.sidebar:
-        st.image("assets/taxbaseAI_logo.png", width=120)
+        st.image("assets/taxbaseAI_logo.png", width=250)
         st.divider()
 
     authenticator.logout("Sair", "sidebar")
