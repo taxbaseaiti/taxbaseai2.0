@@ -349,7 +349,7 @@ def apply_account_mapping(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 def clean_data(df):
-    return df.dropna(subset=["amount"]).query("amount != 0").drop_duplicates()
+    return df.dropna(subset=["amount"]).query("amount != 0").drop_duplicates(subset=["account_std", "amount"])
 
 def load_and_clean(company_id: str, date_str: str) -> tuple[pd.DataFrame, pd.DataFrame] | tuple[None, None]:
     dre_raw = load_csv_from_dropbox(f"DRE_{date_str}_{company_id}.csv",
@@ -364,6 +364,9 @@ def load_and_clean(company_id: str, date_str: str) -> tuple[pd.DataFrame, pd.Dat
             add_metadata(standardize_columns(dre_raw), "income_statement", date_str, company_id)
         )
     )
+    #Trata despesas operacionais sempre com valor positivo
+    dre.loc[dre["account_std"] == "operating_expenses", "amount"] = dre.loc[dre["account_std"] == "operating_expenses", "amount"].abs()
+
     bal = clean_data(
         apply_account_mapping(
             add_metadata(standardize_columns(bal_raw), "balance_sheet",    date_str, company_id)
@@ -390,8 +393,11 @@ def compute_indicators(dre: pd.DataFrame, bal: pd.DataFrame) -> pd.DataFrame:
     non_current    = bal_sum.get("non_current_assets", 0)
     total_ativo    = bal_sum.get("total_assets", ativo_circ + non_current)
     non_current_li = bal_sum.get("non_current_liabilities", 0)
-    pat_liq        = bal_sum.get("equity", 0)
     total_pass     = pass_circ + non_current_li
+    # Patrimônio Líquido: Usa "equity" mapeado ou deriva de total_ativo - total_pass
+    pat_liq = bal_sum.get("equity", None)
+    if not pat_liq:
+        pat_liq = total_ativo - total_pass
 
     liquidez_corrente = ativo_circ / pass_circ if pass_circ else None
     liquidez_seca     = (ativo_circ - estoque) / pass_circ if pass_circ else None
