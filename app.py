@@ -440,138 +440,132 @@ def compute_indicators(dre: pd.DataFrame, bal: pd.DataFrame) -> pd.DataFrame:
         ]
     })
 
-# -----------------------------------------------------------------------------  
-# 4. UI & Navigation  
 # -----------------------------------------------------------------------------
-if st.session_state.get("logged_in"):
-    username = st.session_state["username"]
-    user_info = USERS[username]
-    role      = user_info["role"]
-    empresa   = user_info["empresa"]
+# 4. UI & Navigation
+# -----------------------------------------------------------------------------
+if st.session_state.get("logged_in") and st.session_state.get("username"):
+    username = st.session_state.get("username")
 
-    authenticator.logout("Sair", "sidebar")
-    st.sidebar.success(f"Conectado como {user_info['name']} ({role})")
+    if username in USERS:
+        user_info = USERS[username]
+        role      = user_info["role"]
+        empresa   = user_info["empresa"]
 
-    available_companies = ["CICLOMADE", "JJMAX", "SAUDEFORMA"]
-    if role == "admin":
-        session_companies = st.sidebar.multiselect(
-            "Selecione empresas", available_companies, default=available_companies
-        )
-    else:
-        session_companies = [empresa]
+        authenticator.logout("Sair", "sidebar")
+        st.sidebar.success(f"Conectado como {user_info['name']} ({role})")
 
-    # Filtrar apenas empresas válidas
-    session_companies = [c for c in session_companies if c in available_companies]
-    if not session_companies:
-        st.sidebar.error("Selecione ao menos uma empresa válida.")
-
-    session_date = st.sidebar.date_input("Data de Referência", value=pd.to_datetime("2024-12-31"))
-    date_str = session_date.strftime("%Y-%m-%d")
-
-    company_for_metrics = st.sidebar.selectbox("Empresa para Métricas", session_companies)
-
-    # Carregar dados com tratamento de erros
-    all_dre, all_bal = [], []
-    for comp in session_companies:
-        dre, bal = load_and_clean(comp, date_str)
-        if dre is None or bal is None:
-            st.warning(f"Pulando {comp}: dados não encontrados.")
-            continue
-        all_dre.append(dre)
-        all_bal.append(bal)
-
-    if all_dre and all_bal:
-        df_all = pd.concat(all_dre + all_bal, ignore_index=True)
-    else:
-        df_all = pd.DataFrame()  # vazio
-
-    page = st.sidebar.radio("📊 Navegação", ["Visão Geral", "Dashboards", "Chatbot"])
-
-    if page == "Visão Geral":
-        dre_sel, bal_sel = load_and_clean(company_for_metrics, date_str)
-        if dre_sel is None or bal_sel is None:
-            st.error("Não há dados para Visão Geral.")
+        available_companies = ["CICLOMADE", "JJMAX", "SAUDEFORMA"]
+        if role == "admin":
+            session_companies = st.sidebar.multiselect(
+                "Selecione empresas", available_companies, default=available_companies
+            )
         else:
-            rpt = compute_indicators(dre_sel, bal_sel)
-            st.header(f"🏁 Indicadores {company_for_metrics} em {date_str}")
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Lucro Bruto",  f"R$ {rpt.loc[0,'Valor']:,.2f}")
-            c2.metric("EBITDA",        f"R$ {rpt.loc[1,'Valor']:,.2f}")
-            c3.metric("Lucro Líquido", f"R$ {rpt.loc[2,'Valor']:,.2f}")
-            c4, c5, c6 = st.columns(3)
-            c4.metric("Liquidez Corrente", f"{rpt.loc[3,'Valor']:.2f}")
-            c5.metric("Endividamento",     f"{rpt.loc[5,'Valor']:.2%}")
-            c6.metric("ROE",               f"{rpt.loc[7,'Valor']:.2%}")
+            session_companies = [empresa]
 
-            st.markdown("---")
-            st.dataframe(rpt.style.format({"Valor":"R$ {:,.2f}"}), use_container_width=True)
+        # Filtrar apenas empresas válidas
+        session_companies = [c for c in session_companies if c in available_companies]
+        if not session_companies:
+            st.sidebar.error("Selecione ao menos uma empresa válida.")
 
-    elif page == "Dashboards":
-        if df_all.empty:
-            st.info("Nenhum dado disponível para as seleções atuais.")
+        session_date = st.sidebar.date_input("Data de Referência", value=pd.to_datetime("2024-12-31"))
+        date_str = session_date.strftime("%Y-%m-%d")
+
+        company_for_metrics = st.sidebar.selectbox("Empresa para Métricas", session_companies)
+
+        # Carregar dados com tratamento de erros
+        all_dre, all_bal = [], []
+        for comp in session_companies:
+            dre, bal = load_and_clean(comp, date_str)
+            if dre is None or bal is None:
+                st.warning(f"Pulando {comp}: dados não encontrados.")
+                continue
+            all_dre.append(dre)
+            all_bal.append(bal)
+
+        if all_dre and all_bal:
+            df_all = pd.concat(all_dre + all_bal, ignore_index=True)
         else:
-            st.header("📈 Dashboards")
-            # Exemplo de gráfico Altair
-            chart = alt.Chart(df_all).mark_bar().encode(
-                x="account_std:N",
-                y="amount:Q",
-                color="company_id:N",
-                tooltip=["company_id","account_std","amount"]
+            df_all = pd.DataFrame()  # vazio
+
+        page = st.sidebar.radio("📊 Navegação", ["Visão Geral", "Dashboards", "Chatbot"])
+
+        if page == "Visão Geral":
+            dre_sel, bal_sel = load_and_clean(company_for_metrics, date_str)
+            if dre_sel is None or bal_sel is None:
+                st.error("Não há dados para Visão Geral.")
+            else:
+                rpt = compute_indicators(dre_sel, bal_sel)
+                st.header(f"🏁 Indicadores {company_for_metrics} em {date_str}")
+                c1, c2, c3 = st.columns(3)
+                c1.metric("Lucro Bruto",  f"R$ {rpt.loc[0,'Valor']:,.2f}")
+                c2.metric("EBITDA",        f"R$ {rpt.loc[1,'Valor']:,.2f}")
+                c3.metric("Lucro Líquido", f"R$ {rpt.loc[2,'Valor']:,.2f}")
+                c4, c5, c6 = st.columns(3)
+                c4.metric("Liquidez Corrente", f"{rpt.loc[3,'Valor']:.2f}")
+                c5.metric("Endividamento",     f"{rpt.loc[5,'Valor']:.2%}")
+                c6.metric("ROE",               f"{rpt.loc[7,'Valor']:.2%}")
+
+                st.markdown("---")
+                st.dataframe(rpt.style.format({"Valor":"R$ {:,.2f}"}), use_container_width=True)
+
+        elif page == "Dashboards":
+            if df_all.empty:
+                st.info("Nenhum dado disponível para as seleções atuais.")
+            else:
+                st.header("📈 Dashboards")
+                chart = alt.Chart(df_all).mark_bar().encode(
+                    x="account_std:N",
+                    y="amount:Q",
+                    color="company_id:N",
+                    tooltip=["company_id","account_std","amount"]
+                )
+                st.altair_chart(chart, use_container_width=True)
+
+        else:  # Chatbot
+            st.markdown(
+                """
+                <style>
+                .stApp { background-color: #191919; font-family: 'Segoe UI', sans-serif; }
+                .stChatMessage.user { background-color: #d1e7ff; border-radius: 12px; padding: 10px; color: #003366; }
+                .stChatMessage.assistant { background-color: #ffffff; border-radius: 12px; padding: 10px; border: 1px solid #e0e0e0; color: #222; }
+                </style>
+                """,
+                unsafe_allow_html=True
             )
-            st.altair_chart(chart, use_container_width=True)
 
-    else:  # Chatbot
-        st.markdown(
-            """
-            <style>
-            .stApp { background-color: #191919; font-family: 'Segoe UI', sans-serif; }
-            .stChatMessage.user { background-color: #d1e7ff; border-radius: 12px; padding: 10px; color: #003366; }
-            .stChatMessage.assistant { background-color: #ffffff; border-radius: 12px; padding: 10px; border: 1px solid #e0e0e0; color: #222; }
-            </style>
-            """,
-            unsafe_allow_html=True
-        )
+            st.header(f"🤖 Chatbot Contábil - {company_for_metrics}")
 
-        st.header(f"🤖 Chatbot Contábil - {company_for_metrics}")
+            if "messages" not in st.session_state:
+                st.session_state.messages = []
 
-        # Inicializa histórico
-        if "messages" not in st.session_state:
-            st.session_state.messages = []
+            for msg in st.session_state.messages:
+                with st.chat_message(msg["role"], avatar=msg.get("avatar", None)):
+                    st.markdown(msg["content"])
 
-        # Renderiza histórico rolável
-        for msg in st.session_state.messages:
-            with st.chat_message(msg["role"], avatar=msg.get("avatar", None)):
-                st.markdown(msg["content"])
+            if prompt := st.chat_input("Digite sua pergunta sobre os indicadores..."):
+                st.session_state.messages.append({"role": "user", "content": prompt, "avatar": "🧑"})
+                with st.chat_message("user", avatar="🧑"):
+                    st.markdown(prompt)
 
-        # Entrada do usuário
-        if prompt := st.chat_input("Digite sua pergunta sobre os indicadores..."):
-            # Adiciona pergunta do usuário
-            st.session_state.messages.append({"role": "user", "content": prompt, "avatar": "🧑"})
-            with st.chat_message("user", avatar="🧑"):
-                st.markdown(prompt)
+                contexts = semantic_search(prompt, index, meta, top_k=3)
+                ctx_txt = "\n".join(f"Q: {c['q']}\nA: {c['a']}" for c in contexts)
 
-            # Busca contexto semântico
-            contexts = semantic_search(prompt, index, meta, top_k=3)
-            ctx_txt = "\n".join(f"Q: {c['q']}\nA: {c['a']}" for c in contexts)
+                dre_raw = load_csv_from_dropbox(
+                    f"DRE_{date_str}_{company_for_metrics}.csv",
+                    ["nome_empresa", "descrição", "valor"]
+                )
+                bal_raw = load_csv_from_dropbox(
+                    f"BALANCO_{date_str}_{company_for_metrics}.csv",
+                    ["nome_empresa", "descrição", "saldo_atual"]
+                )
+                if dre_raw is None or bal_raw is None:
+                    st.error("Não foi possível carregar os dados brutos.")
+                    st.stop()
 
-            # Carrega dados brutos
-            dre_raw = load_csv_from_dropbox(
-                f"DRE_{date_str}_{company_for_metrics}.csv",
-                ["nome_empresa", "descrição", "valor"]
-            )
-            bal_raw = load_csv_from_dropbox(
-                f"BALANCO_{date_str}_{company_for_metrics}.csv",
-                ["nome_empresa", "descrição", "saldo_atual"]
-            )
-            if dre_raw is None or bal_raw is None:
-                st.error("Não foi possível carregar os dados brutos.")
-                st.stop()
+                dre_csv = dre_raw.to_csv(index=False)
+                bal_csv = bal_raw.to_csv(index=False)
 
-            dre_csv = dre_raw.to_csv(index=False)
-            bal_csv = bal_raw.to_csv(index=False)
-
-            # Monta prompt
-            full_prompt = f"""
+                full_prompt = f"""
 Você é um assistente contábil.
 
 Aqui estão os dados brutos da Demonstração de Resultados (DRE):
@@ -588,36 +582,33 @@ Pergunta: {prompt}
 Responda de forma objetiva e fundamentada **nos dados brutos acima**.
 """
 
-            # Efeito de digitação
-            with st.chat_message("assistant", avatar="🤖"):
-                typing_placeholder = st.empty()
-                typing_placeholder.markdown("_Digitando..._")
-                time.sleep(0.8)  # pequena pausa para simular início
-                resposta = client.chat.completions.create(
-                    model="gpt-3.5-turbo",
-                    messages=[
-                        {"role": "system", "content": "Assistente contábil de indicadores."},
-                        {"role": "user", "content": full_prompt}
-                    ],
-                    temperature=0
-                ).choices[0].message.content.strip()
+                with st.chat_message("assistant", avatar="🤖"):
+                    typing_placeholder = st.empty()
+                    typing_placeholder.markdown("_Digitando..._")
+                    time.sleep(0.8)
+                    resposta = client.chat.completions.create(
+                        model="gpt-3.5-turbo",
+                        messages=[
+                            {"role": "system", "content": "Assistente contábil de indicadores."},
+                            {"role": "user", "content": full_prompt}
+                        ],
+                        temperature=0
+                    ).choices[0].message.content.strip()
 
-                # Simula texto aparecendo aos poucos
-                typing_placeholder.empty()
-                displayed_text = ""
-                for char in resposta:
-                    displayed_text += char
-                    typing_placeholder.markdown(displayed_text)
-                    time.sleep(0.005)  # velocidade da digitação
+                    typing_placeholder.empty()
+                    displayed_text = ""
+                    for char in resposta:
+                        displayed_text += char
+                        typing_placeholder.markdown(displayed_text)
+                        time.sleep(0.005)
 
-            # Salva no histórico
-            st.session_state.messages.append({"role": "assistant", "content": resposta, "avatar": "🤖"})
+                st.session_state.messages.append({"role": "assistant", "content": resposta, "avatar": "🤖"})
 
-            # Resposta encadeada: sugestão de próxima pergunta
-            follow_up = f"Quer que eu analise também a evolução desses indicadores em relação ao período anterior?"
-            st.session_state.messages.append({"role": "assistant", "content": follow_up, "avatar": "🤖"})
-            with st.chat_message("assistant", avatar="🤖"):
-                st.markdown(follow_up)
+                follow_up = f"Quer que eu analise também a evolução desses indicadores em relação ao período anterior?"
+                st.session_state.messages.append({"role": "assistant", "content": follow_up, "avatar": "🤖"})
+                with st.chat_message("assistant", avatar="🤖"):
+                    st.markdown(follow_up)
 
-            # Armazena embedding
-            upsert_embedding(prompt, resposta, index, meta)
+                upsert_embedding(prompt, resposta, index, meta)
+else:
+    st.write("Você não está logado.")
