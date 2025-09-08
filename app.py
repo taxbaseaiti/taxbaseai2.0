@@ -496,7 +496,7 @@ if st.session_state.get("authentication_status"):
         st.markdown(
             """
             <style>
-            .stApp { background-color: #00008b; font-family: 'Segoe UI', sans-serif; }
+            .stApp { background-color: #808080; font-family: 'Segoe UI', sans-serif; }
             .stChatMessage.user { background-color: #d1e7ff; border-radius: 12px; padding: 10px; color: #003366; }
             .stChatMessage.assistant { background-color: #ffffff; border-radius: 12px; padding: 10px; border: 1px solid #e0e0e0; color: #222; }
             </style>
