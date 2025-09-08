@@ -52,30 +52,35 @@ authenticator = stauth.Authenticate(
     cfg["expiry_days"],
 )
 
-# Renderiza o formulário de login
-authenticator.login(
-    location="main",
-    fields={
-        "Form name": "Acesso ao Sistema",
-        "Username": "Usuário",
-        "Password": "Senha",
-        "Login": "Entrar"
-    }
-)
+# ======== LOGIN ========
+if not st.session_state.get("logged_in"):
+    authenticator.login(
+        location="main",
+        fields={
+            "Form name": "Acesso ao Sistema",
+            "Username": "Usuário",
+            "Password": "Senha",
+            "Login": "Entrar"
+        }
+    )
 
-# Recupera valores do estado da sessão
-name = st.session_state.get("name")
-authentication_status = st.session_state.get("authentication_status")
-username = st.session_state.get("username")
+    name = st.session_state.get("name")
+    authentication_status = st.session_state.get("authentication_status")
+    username = st.session_state.get("username")
 
-# Lógica de autenticação
-if authentication_status:
-    st.success(f"Bem-vindo, {name}!")
-elif authentication_status is False:
-    st.error("Usuário ou senha incorretos")
-else:
-    st.warning("Por favor, insira suas credenciais")
+    if authentication_status:
+        st.session_state["logged_in"] = True
+        st.session_state["username"] = username
+        # Define página inicial após login
+        st.session_state["page"] = "Visão Geral"
+        st.success(f"Bem-vindo, {name}!")
+        st.experimental_rerun()
 
+    elif authentication_status is False:
+        st.error("Usuário ou senha incorretos")
+
+    else:
+        st.warning("Por favor, insira suas credenciais")
 
 # -----------------------------------------------------------------------------  
 # 1. FAISS Embeddings  
