@@ -2,5 +2,5 @@
 base="dark"
 primaryColor="#0092caff"
 backgroundColor = "#0E1117ff"
-secondaryBackgroundColor = "#101113ff"
+secondaryBackgroundColor = "#000000ff"
 textColor = "#FAFAFAFA"
