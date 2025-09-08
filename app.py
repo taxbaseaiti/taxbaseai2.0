@@ -10,6 +10,7 @@ import altair as alt
 import plotly.express as px
 import faiss
 import pickle
+import time
 
 # -----------------------------------------------------------------------------  
 # 0. Settings & Secrets  
@@ -495,26 +496,9 @@ if st.session_state.get("authentication_status"):
         st.markdown(
             """
             <style>
-            /* Fundo geral */
-            .stApp {
-                background-color: #f7f9fc;
-                font-family: 'Segoe UI', sans-serif;
-            }
-            /* Balões do usuário */
-            .stChatMessage.user {
-                background-color: #d1e7ff;
-                border-radius: 12px;
-                padding: 10px;
-                color: #003366;
-            }
-            /* Balões da IA */
-            .stChatMessage.assistant {
-                background-color: #ffffff;
-                border-radius: 12px;
-                padding: 10px;
-                border: 1px solid #e0e0e0;
-                color: #222;
-            }
+            .stApp { background-color: #00008b; font-family: 'Segoe UI', sans-serif; }
+            .stChatMessage.user { background-color: #d1e7ff; border-radius: 12px; padding: 10px; color: #003366; }
+            .stChatMessage.assistant { background-color: #ffffff; border-radius: 12px; padding: 10px; border: 1px solid #e0e0e0; color: #222; }
             </style>
             """,
             unsafe_allow_html=True
@@ -522,21 +506,19 @@ if st.session_state.get("authentication_status"):
 
         st.header(f"🤖 Chatbot Contábil - {company_for_metrics}")
 
-        # Inicializa histórico de mensagens
+        # Inicializa histórico
         if "messages" not in st.session_state:
             st.session_state.messages = []
 
-        # Renderiza histórico
+        # Renderiza histórico rolável
         for msg in st.session_state.messages:
             with st.chat_message(msg["role"], avatar=msg.get("avatar", None)):
                 st.markdown(msg["content"])
 
-        # Campo de entrada estilo chat
+        # Entrada do usuário
         if prompt := st.chat_input("Digite sua pergunta sobre os indicadores..."):
             # Adiciona pergunta do usuário
-            st.session_state.messages.append(
-                {"role": "user", "content": prompt, "avatar": "🧑"}
-            )
+            st.session_state.messages.append({"role": "user", "content": prompt, "avatar": "🧑"})
             with st.chat_message("user", avatar="🧑"):
                 st.markdown(prompt)
 
@@ -560,7 +542,7 @@ if st.session_state.get("authentication_status"):
             dre_csv = dre_raw.to_csv(index=False)
             bal_csv = bal_raw.to_csv(index=False)
 
-            # Monta prompt para IA
+            # Monta prompt
             full_prompt = f"""
 Você é um assistente contábil.
 
@@ -578,24 +560,36 @@ Pergunta: {prompt}
 Responda de forma objetiva e fundamentada **nos dados brutos acima**.
 """
 
-            # Chama API
-            resposta = client.chat.completions.create(
-                model="gpt-3.5-turbo",
-                messages=[
-                    {"role": "system", "content": "Assistente contábil de indicadores."},
-                    {"role": "user", "content": full_prompt}
-                ],
-                temperature=0
-            ).choices[0].message.content.strip()
-
-            # Exibe resposta com avatar da IA
+            # Efeito de digitação
             with st.chat_message("assistant", avatar="🤖"):
-                st.markdown(resposta)
+                typing_placeholder = st.empty()
+                typing_placeholder.markdown("_Digitando..._")
+                time.sleep(0.8)  # pequena pausa para simular início
+                resposta = client.chat.completions.create(
+                    model="gpt-3.5-turbo",
+                    messages=[
+                        {"role": "system", "content": "Assistente contábil de indicadores."},
+                        {"role": "user", "content": full_prompt}
+                    ],
+                    temperature=0
+                ).choices[0].message.content.strip()
+
+                # Simula texto aparecendo aos poucos
+                typing_placeholder.empty()
+                displayed_text = ""
+                for char in resposta:
+                    displayed_text += char
+                    typing_placeholder.markdown(displayed_text)
+                    time.sleep(0.005)  # velocidade da digitação
 
             # Salva no histórico
-            st.session_state.messages.append(
-                {"role": "assistant", "content": resposta, "avatar": "🤖"}
-            )
+            st.session_state.messages.append({"role": "assistant", "content": resposta, "avatar": "🤖"})
+
+            # Resposta encadeada: sugestão de próxima pergunta
+            follow_up = f"Quer que eu analise também a evolução desses indicadores em relação ao período anterior?"
+            st.session_state.messages.append({"role": "assistant", "content": follow_up, "avatar": "🤖"})
+            with st.chat_message("assistant", avatar="🤖"):
+                st.markdown(follow_up)
 
             # Armazena embedding
             upsert_embedding(prompt, resposta, index, meta)
