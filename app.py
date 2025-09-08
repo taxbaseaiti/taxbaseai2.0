@@ -436,6 +436,35 @@ def generate_followups(user_prompt: str, assistant_answer: str, company: str, da
             "Quer ver a evolução desses indicadores versus o período anterior?",
             "Deseja que eu detalhe a composição das despesas operacionais?"
         ]
+    
+# -----------------------------------------------------------------------------  
+# 3.2 Personalidade & Contexto Contínuo
+# -----------------------------------------------------------------------------
+TONE_SYSTEM = (
+    "Você é um assistente contábil com voz inteligente e próxima. "
+    "Estilo: claro, direto, sem jargões desnecessários, e sempre útil. "
+    "Use linguagem simples, destaque números importantes com contexto de negócio."
+)
+
+def brief_history(messages: list[dict], limit: int = 6, max_chars: int = 900) -> str:
+    if not messages:
+        return ""
+    tail = messages[-limit:]
+    lines = []
+    for m in tail:
+        role = "Usuário" if m["role"] == "user" else "IA"
+        txt = m["content"].strip()
+        if len(txt) > 300:
+            txt = txt[:300] + "..."
+        lines.append(f"{role}: {txt}")
+    return "\n".join(lines)[:max_chars]
+
+def initial_greeting(company: str, date_str: str) -> str:
+    return (
+        f"Oi — eu sou a sua AI contábil. Vamos olhar a {company} em {date_str}? "
+        "Posso analisar margens, liquidez, variações relevantes e sugerir próximos passos. "
+        "Comece pedindo um raio-x rápido ou perguntando por um indicador específico."
+    )
 
 # -----------------------------------------------------------------------------  
 # 4. UI & Navigation  
@@ -569,9 +598,26 @@ if st.session_state.get("authentication_status"):
         
         st.header(f"🤖 Chatbot Contábil - {company_for_metrics}")
 
-        # Inicializa Histórico
+        # Inicializa Histórico + saudação proativa
         if "messages" not in st.session_state:
             st.session_state.messages = []
+            # Saudação inicial usando sua função de greeting
+            greeting = initial_greeting(company_for_metrics, date_str)
+            st.session_state.messages.append({
+                "role": "assistant",
+                "content": greeting,
+                "avatar": "🤖"
+            })
+            # Quick-replies inciais
+            with st.chat_message("assistant", avatar="🤖"):
+                st.markdown("Quer começar por aqui?")
+                cols = st.columns(3)
+                for i, q in enumerate([
+                    "Me traga um raio-x financeiro do período",
+                    "Como está a liquidez e a alavancagem?"
+                    "Quais despesas mais subiram e por quê?"
+                ]):
+                    cols[i].button(q, key=f"starter_{i}", on_click=enqueue_prompt, args=(q,))
 
         # Contêiner rolável para histórico
         st.markdown('<div class="chat-history">', unsafe_allow_html=True)
@@ -597,6 +643,8 @@ if st.session_state.get("authentication_status"):
             contexts = semantic_search(prompt, index, meta, top_k=3)
             ctx_txt = "\n".join(f"Q: {c['q']}\nA: {c['a']}" for c in contexts)
 
+            brief_ctx = brief_history(st.session_state.messages)
+
             # Carrega os Dados Brutos
             dre_raw = load_csv_from_dropbox(
                 f"DRE_{date_str}_{company_for_metrics}.csv",
@@ -617,6 +665,12 @@ if st.session_state.get("authentication_status"):
             # Monta prompt com os dados brutos
             full_prompt = f"""
 Você é um assistente contábil.
+
+Sistema (tom e contexto resumido):
+{TONE_SYSTEM}
+
+Histórico Resumido:
+{brief_ctx}
 
 Aqui estão os dados brutos da Demonstração de Resultados (DRE):
 {dre_csv}
